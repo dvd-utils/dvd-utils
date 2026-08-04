@@ -10,6 +10,7 @@ private slots:
     void explicitConstructorInitializesColors();
     void setColorUpdatesRgbAndAlpha();
     void setYcbcrPreservesAlpha();
+    void transparentIndexPrefersFirstEntryForEqualMinimumAlpha();
 };
 
 void TestPaletteBehavior::copyConstructorPreservesPaletteState()
@@ -68,6 +69,16 @@ void TestPaletteBehavior::setYcbcrPreservesAlpha()
     QCOMPARE(palette.YCbCr(0).at(0), 16);
     QCOMPARE(palette.YCbCr(0).at(1), 128);
     QCOMPARE(palette.YCbCr(0).at(2), 128);
+}
+
+void TestPaletteBehavior::transparentIndexPrefersFirstEntryForEqualMinimumAlpha()
+{
+    Palette palette(3, true);
+    palette.setARGB(0, qRgba(1, 2, 3, 100));
+    palette.setARGB(1, qRgba(4, 5, 6, 100));
+    palette.setARGB(2, qRgba(7, 8, 9, 150));
+
+    QCOMPARE(palette.transparentIndex(), 0);
 }
 
 QTEST_APPLESS_MAIN(TestPaletteBehavior)
