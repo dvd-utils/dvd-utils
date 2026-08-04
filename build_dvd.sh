@@ -16,7 +16,7 @@
 set -euo pipefail
 
 # ----------------------------- CONFIG ---------------------------------------
-MAIN_MOVIE=""      # Pre-encoded MPEG2 main feature, like './Movie Name_pal.mpg' or else falls back to the first .mpg file in root folder if not specified
+MAIN_MOVIE=""      # Pre-encoded MPEG2 main feature, like './Movie Name_pal.mpg' or falls back to first .mpg in root
 EXTRAS_DIR="./extras"                  # Folder optionally containing extra .mpg files
 WORK_DIR="./work"                      # Scratch space, safe to delete after success
 OUT_DIR="./dvd"                        # Final DVD-Video output structure
@@ -66,9 +66,7 @@ else
     BDSUP2SUB_CMD=("$(command -v bdsup2sub)")
 
   # 4. Fall back to a local bdsup2sub.jar.
-  elif [ ${#BDSUP2SUB_CMD[@]} -eq 0 ] &&
-       command -v java >/dev/null 2>&1 &&
-       [ -f "./bdsup2sub.jar" ]; then
+  elif [ ${#BDSUP2SUB_CMD[@]} -eq 0 ] && command -v java >/dev/null 2>&1 && [ -f "./bdsup2sub.jar" ]; then
     BDSUP2SUB_CMD=("java" "-jar" "./bdsup2sub.jar")
   fi
 fi
@@ -98,6 +96,7 @@ if [ ${#BDSUP2SUB_CMD[@]} -eq 0 ]; then
 fi
 echo "Using subtitle converter: ${BDSUP2SUB_CMD[*]}"
 # ----------------------------------------------------------------------------
+
 for t in dvdauthor spumux ffmpeg ffprobe convert; do need "$t"; done
 
 # Define fallback fonts (sans-serif bold preferred)
@@ -113,7 +112,7 @@ if [ -z "$IM_FONT" ]; then
     echo "ERROR: No suitable fallback font found in ImageMagick (check 'convert -list font')." >&2
     exit 1
 fi
-FONT="$IM_FONT"                # convert -list font
+FONT="$IM_FONT" # convert -list font
 
 # Resolve main movie:
 # - Use configured MAIN_MOVIE when it exists and is non-empty.
@@ -231,6 +230,7 @@ detect_dvd_format() {
   fi
 
   DETECTED_FORMAT="$fmt"
+  export VIDEO_FORMAT="${fmt^^}"
   WIDTH="$w"
   HEIGHT="$h"
   if [ "$fmt" = "pal" ]; then
@@ -610,7 +610,6 @@ process_video_and_subs() {
     fi
   done
 
-  # Default selection order: Config DEFAULT_HINT > track0 > first track
   if [ "$default_index" -eq -1 ]; then
     if [ "$track0_index" -ne -1 ]; then
       default_index=$track0_index
@@ -695,6 +694,7 @@ echo "  ----------------------------------------"
       }
       END { print "  </stream>\n</subpictures>" }
     ' "${pfx}_bdn.xml" > "${pfx}.xml"
+
     local next_vid="$WORK_DIR/ts${ts_idx}_mux_${i}.mpg"
     # Mux directly using the generated DVDAuthor-formatted XML
     run_logged "$LOG_DIR/ts${ts_idx}_spumux_${i}.log" \
@@ -706,6 +706,7 @@ echo "  ----------------------------------------"
 
   cp "$current_vid" "$CURRENT_MUXED_MPG"
 }
+
 # ---------------------------------------------------------------------------
 # HELPER: Generate XML chunk for a single Titleset
 # ---------------------------------------------------------------------------
@@ -744,7 +745,7 @@ append_titleset_xml() {
 
     XML_TITLESETS+="        <button name=\"b$btn_idx\"> { subtitle = 62; if (g1 eq 1) resume; else jump title 1 chapter 1; } </button>\n"
     btn_idx=$((btn_idx+1))
-    XML_TITLESETS+="        <button name=\"b$btn_idx\"> { g1 = 0; jump vmgm menu entry title; } </button>\n"
+    XML_TITLESETS+="        <button name=\"b$btn_idx\"> { g1 = 0; jump vmgm menu; } </button>\n"
 
     XML_TITLESETS+="        <post> { if (g1 eq 1) resume; else jump title 1 chapter 1; } </post>\n"
     XML_TITLESETS+="      </pgc>\n    </menus>\n"
@@ -767,7 +768,7 @@ append_titleset_xml() {
     XML_TITLESETS+="        <pre> { g1 = 1; } </pre>\n"
   fi
   XML_TITLESETS+="        <vob file=\"$muxed_mpg\" chapters=\"0\" />\n"
-  XML_TITLESETS+="        <post> { g1 = 0; call vmgm menu entry title; } </post>\n"
+  XML_TITLESETS+="        <post> { g1 = 0; call vmgm menu; } </post>\n"
   XML_TITLESETS+="      </pgc>\n    </titles>\n"
   XML_TITLESETS+="  </titleset>\n\n"
 }
@@ -847,12 +848,11 @@ done
 # --- Assemble final dvdauthor.xml ---
 XML_FILE="$WORK_DIR/dvdauthor.xml"
 printf '<?xml version="1.0"?>\n' > "$XML_FILE"
-printf '<dvdauthor dest="%s" jumppad="yes" format="%s">\n\n' "$OUT_DIR" "$DETECTED_FORMAT" >> "$XML_FILE"
+printf '<dvdauthor dest="%s" jumppad="yes">\n\n' "$OUT_DIR" >> "$XML_FILE"
 
 printf '  <vmgm>\n' >> "$XML_FILE"
 printf '    <fpc>\n      { g1 = 0; subtitle = %d; %s }\n    </fpc>\n' "$MAIN_DEFAULT_SUBP" "$FPC_JUMP" >> "$XML_FILE"
 printf '    <menus>\n      <video format="%s" resolution="%sx%s" />\n' "$DETECTED_FORMAT" "$WIDTH" "$HEIGHT" >> "$XML_FILE"
-# printf '      <pgc entry="title">\n' >> "$XML_FILE" ERR:  Unknown entry 'title'
 printf '      <pgc>\n' >> "$XML_FILE"
 printf '        <vob file="%s" />\n' "$VMGM_MPG" >> "$XML_FILE"
 printf '%b' "$VMGM_BUTTONS_XML" >> "$XML_FILE"
