@@ -88,8 +88,10 @@ if [ ${#BDSUP2SUB_CMD[@]} -eq 0 ]; then
   echo "  - bdsup2sub in system PATH" >&2
   echo "  - ./bdsup2sub.jar via Java" >&2
   echo >&2
-  echo "Install or compile bdsup2sub++ from:" >&2
-  echo "https://github.com/prinsbert/VobSub-Utilities" >&2
+  echo "Install or compile bdsup2sub++:" >&2
+  echo "git clone https://github.com/prinsbert/VobSub-Utilities && cd ./BDSup2SubPlusPlus && mkdir -p build && cd build && qmake6 ../src/bdsup2sub++.pro" >&2
+  echo "make"
+  echo "cd ../../"
   echo >&2
   echo "Expected local build locations:" >&2
   echo "  ./sup2vobsub/" >&2
