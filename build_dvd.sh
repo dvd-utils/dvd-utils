@@ -225,6 +225,7 @@ detect_dvd_format() {
     TARGET="ntsc-dvd"
     FPS="30000/1001"
   fi
+  echo ""
   echo "+-- Format Detection: $(basename "$file")"
   echo "|  Codec: $vcodec"
   echo "|  Resolution: ${w}x${h}"
@@ -393,17 +394,16 @@ build_menu() {
       text="${text:0:$((max_chars - 1))}…"
     fi
     local y=$((top_margin + i * line_h))
-    y0_arr[$i]=$((y - (point_size + 10)))
-    y1_arr[$i]=$((y + 15))
-
+    # Tightly wrap the text bounding box (text starts at 'y' with NorthWest gravity)
+    y0_arr[$i]=$((y - 5))
+    y1_arr[$i]=$((y + point_size + 5))
     # Use temporary file for ImageMagick to prevent corruption
     run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg${i}.log" \
       convert "${pfx}_bg.png" \
         -gravity NorthWest -fill white -font "$FONT" -pointsize "$point_size" \
         -annotate +${left_margin}+${y} "$text" \
         "${pfx}_bg_tmp.png" && mv "${pfx}_bg_tmp.png" "${pfx}_bg.png"
-    # Use red fill and blue stroke so spumux has 3 distinct colors (transparent, red, blue) to pick masks
-    #Disable anti-aliasing and force 3 colors to satisfy spumux's 16-color limit
+    # Use red fill and blue stroke so spumux has 3 distinct colors (transparent, red, blue) to pick masks. Disable anti-aliasing and force 3 colors to satisfy spumux's 16-color limit
     run_logged "$LOG_DIR/$(basename "$pfx")_convert_hl${i}.log" \
       convert "${pfx}_hl.png" +antialias \
         -gravity NorthWest -fill red -stroke blue -strokewidth 1 -font "$FONT" -pointsize "$point_size" \
@@ -836,6 +836,9 @@ fi
 
 # --- Process Titleset 2..N: Extras ---
 TS_IDX=2
+EXTRAS_MENU_LABELS=()
+EXTRAS_MENU_TARGETS=()
+
 shopt -s nullglob
 if [ -n "${EXTRAS_DIR:-}" ]; then
   extras_array=( "$EXTRAS_DIR"/*.mpg )
@@ -843,6 +846,7 @@ else
   extras_array=()
 fi
 shopt -u nullglob
+
 if [ ${#extras_array[@]} -gt 0 ]; then
   for extra_mpg in "${extras_array[@]}"; do
     [ -s "$extra_mpg" ] || { echo "ERROR: extra file is empty: $extra_mpg" >&2; exit 1; }
@@ -850,15 +854,16 @@ if [ ${#extras_array[@]} -gt 0 ]; then
 
     pretty_name="$(prettify_filename "$extra_mpg")"
     echo ""
-    echo "  Processing Extra $TS_IDX: $pretty_name"
+    echo " Processing Extra $TS_IDX: $pretty_name"
+
     process_video_and_subs "$extra_mpg" "$TS_IDX"
     append_titleset_xml "$TS_IDX" "$pretty_name"
 
-    VMGM_LABELS+=("Extra: $pretty_name")
+    EXTRAS_MENU_LABELS+=("Extra: $pretty_name")
     if [ "$CURRENT_HAS_SUBS" -eq 1 ]; then
-      VMGM_TARGETS+=("jump titleset $TS_IDX menu;")
+      EXTRAS_MENU_TARGETS+=("jump titleset $TS_IDX menu;")
     else
-      VMGM_TARGETS+=("jump titleset $TS_IDX title 1;")
+      EXTRAS_MENU_TARGETS+=("jump titleset $TS_IDX title 1;")
     fi
 
     TS_IDX=$((TS_IDX + 1))
@@ -866,46 +871,75 @@ if [ ${#extras_array[@]} -gt 0 ]; then
 else
   echo "No extras found in $EXTRAS_DIR"
 fi
+
 if [ "$TS_IDX" -gt 100 ]; then
   echo "ERROR: too many titlesets ($((TS_IDX - 1))); DVD-Video supports at most 99." >&2
   exit 1
 fi
-# --- Generate VMGM Menu (Top Level) ---
-echo "Generating VMGM Root Menu..."
+
+# Add Extras button to Main Menu if extras exist
+if [ ${#EXTRAS_MENU_LABELS[@]} -gt 0 ]; then
+  VMGM_LABELS+=("Extras Menu")
+  VMGM_TARGETS+=("jump vmgm menu 2;")
+fi
+
+echo " Generating VMGM Root Menu..."
 VMGM_MPG="$WORK_DIR/vmgm_menu.mpg"
 build_menu "$VMGM_MPG" "Main Menu" "${VMGM_LABELS[@]}"
 
-VMGM_BUTTONS_XML=""
-for i in "${!VMGM_TARGETS[@]}"; do
-  VMGM_BUTTONS_XML+="        <button name=\"b$i\"> { ${VMGM_TARGETS[$i]} } </button>\n"
-done
-# --- Assemble final dvdauthor.xml ---
+# Generate Extras Menu if it exists
+VMGM_EXTRAS_MPG=""
+if [ ${#EXTRAS_MENU_LABELS[@]} -gt 0 ]; then
+  echo " Generating VMGM Extras Menu..."
+  VMGM_EXTRAS_MPG="$WORK_DIR/vmgm_extras_menu.mpg"
+  EXTRAS_MENU_LABELS+=("Main Menu")
+  EXTRAS_MENU_TARGETS+=("jump vmgm menu;")
+  build_menu "$VMGM_EXTRAS_MPG" "Extras Menu" "${EXTRAS_MENU_LABELS[@]}"
+fi
 XML_FILE="$WORK_DIR/dvdauthor.xml"
 printf '<?xml version="1.0"?>\n' > "$XML_FILE"
 printf '<dvdauthor dest="%s" jumppad="yes">\n\n' "$OUT_DIR" >> "$XML_FILE"
+
 printf '  <vmgm>\n' >> "$XML_FILE"
 printf '    <fpc>\n      { g1 = 0; subtitle = %d; %s }\n    </fpc>\n' "$MAIN_DEFAULT_SUBP" "$FPC_JUMP" >> "$XML_FILE"
 printf '    <menus>\n      <video format="%s" resolution="%sx%s" />\n' "$DETECTED_FORMAT" "$WIDTH" "$HEIGHT" >> "$XML_FILE"
-printf '      <pgc pause="inf">\n' >> "$XML_FILE"
+
+# PGC 1: Main Menu
+printf '      <pgc entry="title" pause="inf">\n' >> "$XML_FILE"
 printf '        <vob file="%s" />\n' "$VMGM_MPG" >> "$XML_FILE"
-printf '%b' "$VMGM_BUTTONS_XML" >> "$XML_FILE"
-printf '      </pgc>\n    </menus>\n' >> "$XML_FILE"
+for i in "${!VMGM_TARGETS[@]}"; do
+  printf '        <button name="b%i"> { %s } </button>\n' "$i" "${VMGM_TARGETS[$i]}" >> "$XML_FILE"
+done
+printf '      </pgc>\n' >> "$XML_FILE"
+
+# PGC 2: Extras Menu (only if extras exist)
+if [ -n "$VMGM_EXTRAS_MPG" ]; then
+  printf '      <pgc pause="inf">\n' >> "$XML_FILE"
+  printf '        <vob file="%s" />\n' "$VMGM_EXTRAS_MPG" >> "$XML_FILE"
+  for i in "${!EXTRAS_MENU_TARGETS[@]}"; do
+    printf '        <button name="b%i"> { %s } </button>\n' "$i" "${EXTRAS_MENU_TARGETS[$i]}" >> "$XML_FILE"
+  done
+  printf '      </pgc>\n' >> "$XML_FILE"
+fi
+
+printf '    </menus>\n' >> "$XML_FILE"
 printf '  </vmgm>\n\n' >> "$XML_FILE"
+
 printf '%b' "$XML_TITLESETS" >> "$XML_FILE"
 printf '</dvdauthor>\n' >> "$XML_FILE"
 
-echo "ⓘ Generated dvdauthor XML structure: $XML_FILE"
-
+echo "Generated dvdauthor XML structure: $XML_FILE"
 # ---------------------------------------------------------------------------
 # AUTHOR DVD
 # ---------------------------------------------------------------------------
-echo "ⓘ Clearing output directory: $OUT_DIR"
+echo "Clearing output directory: $OUT_DIR"
 rm -rf "$OUT_DIR"
-echo "ⓘ Authoring DVD (this may take a moment)..."
+echo "Authoring DVD (this may take a moment)..."
 run_logged "$LOG_DIR/dvdauthor.log" dvdauthor -x "$XML_FILE"
+
 OUT_DIR_ABS="$(cd "$OUT_DIR" && pwd)"
 echo "============================================================="
 echo " DVD BUILD COMPLETE"
 echo " Structure: $OUT_DIR_ABS"
-echo " Preview:   vlc dvd://$OUT_DIR_ABS"
+echo " Preview:   vlc \"dvd://${OUT_DIR_ABS}\""
 echo "============================================================="
