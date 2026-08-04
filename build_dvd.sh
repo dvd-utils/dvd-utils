@@ -28,6 +28,8 @@ MAX_POINT_SIZE=36
 # ----------------------------------------------------------------------------
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing required tool: $1" >&2; exit 1; }; }
+# TODO notify user we need to `apt install ffmpeg` etc, and enable `universe` to install ogmrip...
+# ogmrip is not available in the Ubuntu 24.04 repositories, even with sudo add-apt-repository universe
 for t in dvdauthor spumux ffmpeg ffprobe convert subp2pgm subptools; do need "$t"; done
 
 if ! convert -list font 2>/dev/null | grep -qx "  Font: ${FONT}"; then
@@ -486,7 +488,7 @@ process_video_and_subs() {
 
   CURRENT_DEFAULT_SUBP=$((64 + default_index))
 
-  echo "   -> Found ${#idx_files[@]} sub track(s): ${CURRENT_SUB_LABELS[*]}. Default is stream $default_index (${CURRENT_SUB_LABELS[$default_index]})."
+echo "   -> Found ${#idx_files[@]} sub track(s): ${CURRENT_SUB_LABELS[*]}. Default is stream $default_index (${CURRENT_SUB_LABELS[$default_index]})."
 
   local current_vid="$in_mpg"
   for i in "${!idx_files[@]}"; do
@@ -495,32 +497,29 @@ process_video_and_subs() {
     local pfx="$WORK_DIR/ts${ts_idx}_sub_${i}"
     local stage_base="$WORK_DIR/ts${ts_idx}_sub_${i}_input"
 
-    # Stage files into clean paths for subp2pgm
+    # Stage files into clean paths for bdsup2sub
     cp "$f" "${stage_base}.idx"
     cp "$sub" "${stage_base}.sub"
 
-    run_logged "$LOG_DIR/ts${ts_idx}_subp2pgm_${i}.log" \
-      subp2pgm -o "$pfx" "$stage_base"
+    # Use the offscreen Qt platform backend to render PNGs and the spumux XML headlessly
+    run_logged "$LOG_DIR/ts${ts_idx}_bdsup2sub_${i}.log" \
+      env QT_QPA_PLATFORM=offscreen bdsup2sub++ --no-verbose -o "${pfx}.xml" "${stage_base}.idx"
 
+    # Verify that bdsup2sub++ successfully generated the images
     shopt -s nullglob
-    local pgms=( "${pfx}"_*.pgm )
+    local pngs=( "${pfx}"*.png )
     shopt -u nullglob
-    if [ ${#pgms[@]} -eq 0 ]; then
-      echo "ERROR: subp2pgm produced no .pgm frames for $f — subtitle file may be malformed." >&2
+    if [ ${#pngs[@]} -eq 0 ]; then
+      echo "ERROR: bdsup2sub++ produced no .png frames for $f — subtitle file may be malformed." >&2
       exit 1
     fi
-    for pgm in "${pgms[@]}"; do
-      run_logged "$LOG_DIR/ts${ts_idx}_convert_pgm_$(basename "${pgm%.pgm}").log" \
-        convert "$pgm" "${pgm%.pgm}.png"
-    done
-
-    run_logged "$LOG_DIR/ts${ts_idx}_subptools_${i}.log" \
-      subptools --convert spumux -i "${pfx}.xml" -o "${pfx}_spumux.xml"
-    sed -i 's/\.pgm/.png/g' "${pfx}_spumux.xml"
 
     local next_vid="$WORK_DIR/ts${ts_idx}_mux_${i}.mpg"
+
+    # Mux directly using the generated XML
     run_logged "$LOG_DIR/ts${ts_idx}_spumux_${i}.log" \
-      bash -c "spumux -s '$i' '${pfx}_spumux.xml' < '$current_vid' > '$next_vid'"
+      bash -c "spumux -s '$i' '${pfx}.xml' < '$current_vid' > '$next_vid'"
+
     [ -s "$next_vid" ] || { echo "ERROR: spumux produced an empty output muxing subtitle track $i into $(basename "$in_mpg")." >&2; exit 1; }
     current_vid="$next_vid"
   done
