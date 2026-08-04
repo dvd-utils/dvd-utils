@@ -701,6 +701,10 @@ process_video_and_subs() {
       echo "ERROR: bdsup2sub produced no .png frames for $f (subtitle file may be malformed)." >&2
       exit 1
     fi
+    # Quantize PNGs to 4 colors to satisfy spumux's DVD subtitle requirements
+    for png in "${pngs[@]}"; do
+      convert "$png" -alpha on -colors 4 +dither PNG8:"${png}.tmp" && mv "${png}.tmp" "$png"
+    done
 
     # When bdsup2sub++ exports XML subtitles, its root tag is <BDN>:
     #   <BDN Version="0.28" defaultSubtitleStreamName="...">
@@ -711,6 +715,7 @@ process_video_and_subs() {
     # Convert BDN XML -> DVDAuthor spumux XML format
     #
     # Pass $WORK_DIR to awk and use case-insensitive regex for bdn.xml tags
+    # Extract X and Y coordinates from <Graphic> tag so spumux places the cropped PNG correctly
     awk -v workdir="$WORK_DIR" '
       BEGIN { print "<subpictures>\n  <stream>" }
       /<[Ee]vent / {
@@ -720,9 +725,13 @@ process_video_and_subs() {
         }
       }
       /<[Gg]raphic[ >]/ {
+        x=0; y=0
+        if (match($0, /[Xx]="[0-9]+"/)) { x = substr($0, RSTART+3, RLENGTH-4) }
+        if (match($0, /[Yy]="[0-9]+"/)) { y = substr($0, RSTART+3, RLENGTH-4) }
+
         sub(/.*<[Gg]raphic[^>]*>/, "")
         sub(/<\/[Gg]raphic>.*/, "")
-        print "    <spu start=\"" start "\" end=\"" end "\" image=\"" workdir "/" $0 "\" />"
+        print "    <spu start=\"" start "\" end=\"" end "\" image=\"" workdir "/" $0 "\" xoffset=\"" x "\" yoffset=\"" y "\" />"
       }
       END { print "  </stream>\n</subpictures>" }
     ' "${pfx}_bdn.xml" > "${pfx}.xml"
