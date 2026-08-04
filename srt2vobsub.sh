@@ -2,10 +2,11 @@
 #
 # srt2vobsub.sh — Convert an .srt file into a VobSub (.sub/.idx) pair.
 #
-# spumux (from the dvdauthor package) was built with freetype + fribidi + fontconfig support, which means it has a <textsub> element that reads an .srt file and rasterizes it internally.
+# spumux (from the dvdauthor package) was built with freetype + fribidi + fontconfig support,
+# which means it has a <textsub> element that reads an .srt file and rasterizes it internally.
 #
 # Requires:
-#   sudo apt install dvdauthor mencoder ffmpeg
+#   sudo apt install dvdauthor mencoder
 #
 # Usage:
 #   ./srt2vobsub.sh <input.srt> <output_basename> [options]
@@ -37,25 +38,24 @@ Usage: $0 <input.srt> <output_basename> [options]
 
   --format ntsc|pal            DVD frame format (default: $FORMAT)
                                 VobSub is a DVD subpicture format, so it only
-                                comes in these two sizes: 
+                                comes in these two sizes:
                                 - NTSC 720x480 @ 29.97fps
-                                - PAL 720x576 @ 25fps) 
-                                Players scale the bitmap to your actual video 
-                                at playback time, so pick whichever matches 
-                                your source's frame-rate family. It doesn't 
-                                need to match your source's exact resolution.
+                                - PAL 720x576 @ 25fps)
+                                Players scale the bitmap to your actual video
+                                at playback time, so pick whichever matches
+                                your source's frame-rate family.
   --font PATH                  TTF/OTF font file (default: $FONT)
   --fontsize POINTS            Font size in points (default: $FONTSIZE)
-  --charset NAME                Subtitle file's text encoding (default: $CHARSET)
-  --fill-color rgba(r,g,b,a)    Text fill color (default: $FILL_COLOR)
+  --charset NAME               Subtitle file's text encoding (default: $CHARSET)
+  --fill-color rgba(r,g,b,a)   Text fill color (default: $FILL_COLOR)
   --outline-color rgba(r,g,b,a) Text outline color (default: $OUTLINE_COLOR)
-  --outline-thickness N         Outline thickness in px (default: $OUTLINE_THICKNESS)
-  --shadow-color rgba(r,g,b,a)  Drop-shadow color (default: $SHADOW_COLOR)
-  --shadow-offset "+N, +N"      Drop-shadow offset, exact format required
-                                 (default: "$SHADOW_OFFSET")
-  --align left|center|right     Horizontal alignment (default: $HALIGN)
-  --valign top|center|bottom    Vertical alignment (default: $VALIGN)
-  --aspect 4:3|16:9             Target display aspect ratio (default: $ASPECT)
+  --outline-thickness N        Outline thickness in px (default: $OUTLINE_THICKNESS)
+  --shadow-color rgba(r,g,b,a) Drop-shadow color (default: $SHADOW_COLOR)
+  --shadow-offset "+N, +N"     Drop-shadow offset, exact format required
+                                (default: "$SHADOW_OFFSET")
+  --align left|center|right    Horizontal alignment (default: $HALIGN)
+  --valign top|center|bottom   Vertical alignment (default: $VALIGN)
+  --aspect 4:3|16:9            Target display aspect ratio (default: $ASPECT)
 
 Example:
   $0 spa.srt spa --format ntsc --fill-color 'rgba(255,255,0,255)'
@@ -78,23 +78,22 @@ while [ $# -gt 0 ]; do
     --shadow-color)       SHADOW_COLOR="$2"; shift 2 ;;
     --shadow-offset)      SHADOW_OFFSET="$2"; shift 2 ;;
     --align)              HALIGN="$2"; shift 2 ;;
-    --valign)              VALIGN="$2"; shift 2 ;;
-    --aspect)              ASPECT="$2"; shift 2 ;;
-    -h|--help)             usage ;;
+    --valign)             VALIGN="$2"; shift 2 ;;
+    --aspect)             ASPECT="$2"; shift 2 ;;
+    -h|--help)            usage ;;
     *) echo "Unknown option: $1" >&2; usage ;;
   esac
 done
 
 case "$FORMAT" in
-  ntsc) WIDTH=720; HEIGHT=480; FPS="30000/1001"; DVD_TARGET="ntsc-dvd"; SPU_FORMAT="NTSC" ;;
-  pal)  WIDTH=720; HEIGHT=576; FPS=25;            DVD_TARGET="pal-dvd";  SPU_FORMAT="PAL"  ;;
+  ntsc) WIDTH=720; HEIGHT=480; FPS="30000/1001"; DVD_TARGET="ntsc-dvd"; SPU_FORMAT="NTSC"; FPS_INT=30 ;;
+  pal)  WIDTH=720; HEIGHT=576; FPS=25;            DVD_TARGET="pal-dvd"; SPU_FORMAT="PAL";  FPS_INT=25 ;;
   *) echo "--format must be 'ntsc' or 'pal', got: $FORMAT" >&2; exit 1 ;;
 esac
 
 [ -f "$SRT" ]  || { echo "No such file: $SRT" >&2; exit 1; }
 [ -f "$FONT" ] || { echo "Font not found: $FONT" >&2; exit 1; }
 command -v spumux   >/dev/null || { echo "'spumux' not found. sudo apt install dvdauthor" >&2; exit 1; }
-command -v ffmpeg   >/dev/null || { echo "'ffmpeg' not found." >&2; exit 1; }
 command -v mencoder >/dev/null || { echo "'mencoder' not found. sudo apt install mencoder" >&2; exit 1; }
 
 WORKDIR="$(mktemp -d)"
@@ -102,16 +101,16 @@ trap 'rm -rf "$WORKDIR"' EXIT
 XML="$WORKDIR/spumux.xml"
 
 # spumux resolves the textsub filename relative to its own working directory,
-# not relative to the XML file — use an absolute path so it works no matter
+# not relative to the XML file. Use an absolute path so it works no matter
 # where this script is run from.
 SRT_ABS="$(cd "$(dirname "$SRT")" && pwd)/$(basename "$SRT")"
 
 # ---------------------------------------------------------------------------
-# Step 1: Write the spumux XML. This will be used by spumux to mux the 
-# subtitles with an .mpg file (we generate a black dummy mpg if none was 
+# Step 1: Write the spumux XML. This will be used by spumux to mux the
+# subtitles with an .mpg file (we generate a dummy mpg if none was
 # provided).
 #
-# This is the whole "conversion recipe" to rasterize the subtitle text into a 
+# This is the whole "conversion recipe" to rasterize the subtitle text into a
 # DVD picture stream.
 # <filename> is the subtitle file relative to spumux's own working directory,
 # so use an absolute path.
@@ -141,25 +140,21 @@ cat > "$XML" <<EOF
   </stream>
 </subpictures>
 EOF
-echo "==> spumux.xml:"
+echo "==> spumux.xml generated:"
 sed 's/^/    /' "$XML"
-
 # ---------------------------------------------------------------------------
-# Step 2: Build a blank DVD-compliant video to carry the subtitle stream.
-# spumux inserts subtitles into an existing MPEG-PS stream, not as an isolated 
-# picture stream. Since we don't have a real source video at this stage, we 
-# generate a black dummy clip just long enough to cover the last subtitle's end 
-# time (+3s of padding).
+# Step 2: Build (or find) a blank DVD-compliant video to carry the subtitle stream.
 #
-# We use ffmpeg's "-target ntsc-dvd/pal-dvd" preset rather than a hand-rolled
-# mux: spumux requires the real DVD 2048-byte sector pack-header structure,
-# and a generic ffmpeg mux doesn't produce that (confirmed by trial and
-# error: a plain "-f mpeg" mux gets rejected with "Incorrect pack header").
+# spumux inserts subtitles into an existing MPEG-PS stream, not as an isolated
+# picture stream. Since we don't have a real source video at this stage, we
+# generate a dummy clip just long enough to cover the last subtitle's end
+# time (+3s of padding).
 # ---------------------------------------------------------------------------
-echo "==> Determining dummy video duration..."
+echo "==> Determining required video duration..."
 # Locate the last timecode in the .srt file
-LAST_END_LINE=$(grep -oE '[0-9]{2}:[0-9]{2}:[0-9]{2},[0-9]{3} --> [0-9]{2}:[0-9]{2}:[0-9]{2},[0-9]{3}' "$SRT" | tail -1)
+LAST_END_LINE=$(grep -oE '[0-9]{2}:[0-9]{2}:[0-9]{2},[0-9]{3} --> [0-9]{2}:[0-9]{2}:[0-9]{2},[0-9]{3}' "$SRT" | tail -1 || true)
 [ -n "$LAST_END_LINE" ] || { echo "Couldn't find any timecodes in $SRT" >&2; exit 1; }
+
 LAST_END=$(echo "$LAST_END_LINE" | awk '{print $3}' | tr ',' '.')
 # - ${LAST_END%.*} strips the .fff milliseconds off the end (e.g. 01:02:03.450 → 01:02:03)
 # - prefixing `read` with `IFS=:` tells `read` to split only for that one command on colons instead of whitespace, so '01:02:03' → H='01' M='02' S='03'
@@ -167,10 +162,42 @@ LAST_END=$(echo "$LAST_END_LINE" | awk '{print $3}' | tr ',' '.')
 IFS=: read -r H M S <<< "${LAST_END%.*}"
 # Duration in seconds
 DURATION=$(( 10#$H * 3600 + 10#$M * 60 + 10#$S + 3 ))
-echo "    ${DURATION}s (last subtitle ends at ${LAST_END})"
+FRAMES=$(( DURATION * FPS_INT ))
 
-# Generate the black dummy video
-ffmpeg -y -loglevel error -f lavfi -i "color=c=black:s=${WIDTH}x${HEIGHT}:r=${FPS}:d=${DURATION}" -target "$DVD_TARGET" "$WORKDIR/dummy.mpg"
+echo "    Required: ${DURATION}s (~${FRAMES} frames) (last subtitle ends at ${LAST_END})"
+SUITABLE_DUMMY=""
+# Look for a cached dummy video in the current directory (e.g., dummy_pal_5000s.mpg)
+for vid in dummy_${FORMAT}_*s.mpg; do
+  [ -e "$vid" ] || continue
+  # Extract duration in seconds using native bash substitution
+  VID_DUR="${vid#dummy_${FORMAT}_}"
+  VID_DUR="${VID_DUR%s.mpg}"
+  if [[ "$VID_DUR" =~ ^[0-9]+$ ]] && [ "$VID_DUR" -ge "$DURATION" ]; then
+    SUITABLE_DUMMY="$vid"
+    break
+  fi
+done
+if [ -n "$SUITABLE_DUMMY" ]; then
+  echo "==> Found existing cached dummy video: $SUITABLE_DUMMY"
+  DUMMY_VIDEO="$SUITABLE_DUMMY"
+else
+  DUMMY_VIDEO="dummy_${FORMAT}_${DURATION}s.mpg"
+  echo "==> Generating new dummy video ($DUMMY_VIDEO) with mencoder..."
+# We trick mencoder into reading an endless stream of null bytes from /dev/zero,
+# interpreting them as raw YV12 video (which produces a solid green frame).
+# We encode exactly enough frames to cover the subtitle duration.
+  mencoder /dev/zero -demuxer rawvideo -rawvideo w="${WIDTH}":h="${HEIGHT}":fps="${FPS}":format=yv12 -ovc lavc -lavcopts vcodec=mpeg2video -of mpeg -mpegopts format=dvd:tsaf -frames "${FRAMES}" -nosound -quiet -o "$DUMMY_VIDEO" 2>/dev/null
+fi
+
+# Old ffmpeg solution, for reference:
+#
+# # We use ffmpeg's "-target ntsc-dvd/pal-dvd" preset rather than a hand-rolled
+# # mux: spumux requires the real DVD 2048-byte sector pack-header structure,
+# # and a generic ffmpeg mux doesn't produce that (confirmed by trial and
+# # error: a plain "-f mpeg" mux gets rejected with "Incorrect pack header").
+# # ---------------------------------------------------------------------------
+# # Generate the black dummy video
+# ffmpeg -y -loglevel error -f lavfi -i "color=c=black:s=${WIDTH}x${HEIGHT}:r=${FPS}:d=${DURATION}" -target "$DVD_TARGET" "$WORKDIR/dummy.mpg"
 
 # ---------------------------------------------------------------------------
 # Step 3: Mux the subtitles into the dummy video.
@@ -179,14 +206,12 @@ ffmpeg -y -loglevel error -f lavfi -i "color=c=black:s=${WIDTH}x${HEIGHT}:r=${FP
 # stream into a copy of the dummy video.
 # ---------------------------------------------------------------------------
 echo "==> Muxing subtitles with spumux..."
-spumux "$XML" < "$WORKDIR/dummy.mpg" > "$WORKDIR/muxed.mpg"
+spumux "$XML" < "$DUMMY_VIDEO" > "$WORKDIR/muxed.mpg" 2>/dev/null
 
 # ---------------------------------------------------------------------------
 # Step 4: Extract the standalone VobSub .sub/.idx pair.
-# ffmpeg only ships a VobSub *demuxer*. It can read .sub/.idx, but not write it. 
-# mencoder's -vobsubout is the tool that actually performs this specific write.
 # ---------------------------------------------------------------------------
 echo "==> Extracting standalone VobSub .sub/.idx..."
-mencoder "$WORKDIR/muxed.mpg" -o /dev/null -nosound -ovc copy -vobsubout "$OUT" -vobsuboutindex 0 -sid 0 >/dev/null
+mencoder "$WORKDIR/muxed.mpg" -o /dev/null -nosound -ovc copy -vobsubout "$OUT" -vobsuboutindex 0 -sid 0 -quiet >/dev/null 2>&1
 
 echo "==> Done: ${OUT}.sub / ${OUT}.idx"
