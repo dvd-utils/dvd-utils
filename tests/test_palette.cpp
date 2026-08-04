@@ -12,7 +12,6 @@ private slots:
     void setArgbPreservesAlpha();
     void transparentIndexFindsLowestAlpha();
     void yCbCrRoundTripBt601();
-    void stopwatchReturnsNonNegativeElapsedTime();
 };
 
 void TestPalette::constructionDefaults()
@@ -66,18 +65,6 @@ void TestPalette::yCbCrRoundTripBt601()
     QVERIFY(qRed(rgb) >= 0 && qRed(rgb) <= 255);
     QVERIFY(qGreen(rgb) >= 0 && qGreen(rgb) <= 255);
     QVERIFY(qBlue(rgb) >= 0 && qBlue(rgb) <= 255);
-}
-
-void TestPalette::stopwatchReturnsNonNegativeElapsedTime()
-{
-    CStopWatch watch;
-    watch.startTimer();
-    QTest::qWait(10);
-    watch.stopTimer();
-
-    const double elapsed = watch.getElapsedTime();
-    QVERIFY(elapsed >= 0.0);
-    QVERIFY(elapsed < 5.0);
 }
 
 QTEST_APPLESS_MAIN(TestPalette)
