@@ -22,19 +22,17 @@ WORK_DIR="./work"                      # Scratch space, safe to delete after suc
 OUT_DIR="./dvd"                        # Final DVD-Video output structure
 DEFAULT_HINT="nl"                      # Substring for default lang (e.g. "nl" or "dutch")
 MENU_SECONDS=8                         # Loop duration for static menus
-FONT="DejaVu-Sans-Bold"                # convert -list font
 MIN_POINT_SIZE=14                      # Never shrink menu text below this
 MAX_POINT_SIZE=36
 # ----------------------------------------------------------------------------
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing required tool: $1" >&2; exit 1; }; }
-# TODO notify user we need to `apt install ffmpeg` etc, and enable `universe` to install ogmrip...
+# TODO notify user we need to `apt install ffmpeg` etc...
 # ---------------------------------------------------------------------------
 # BULLET-PROOF BDSUP2SUB / SUBTITLE TOOL RESOLUTION
 # ---------------------------------------------------------------------------
 # Ubuntu 24.04 (Noble) does not provide ogmrip in the standard repositories,
-# even with the Universe repository enabled. Therefore, do not rely on
-# ogmrip/subp2pgm being available through apt.
+# even with the Universe repository enabled. Therefore, do not rely on ogmrip/subp2pgm being available through apt.
 #
 # Resolution order:
 #   1. bdsup2sub++ installed in system PATH
@@ -100,12 +98,22 @@ if [ ${#BDSUP2SUB_CMD[@]} -eq 0 ]; then
 fi
 echo "Using subtitle converter: ${BDSUP2SUB_CMD[*]}"
 # ----------------------------------------------------------------------------
-for t in dvdauthor spumux ffmpeg ffprobe convert subp2pgm subptools; do need "$t"; done
+for t in dvdauthor spumux ffmpeg ffprobe convert; do need "$t"; done
 
-if ! convert -list font 2>/dev/null | grep -qx "  Font: ${FONT}"; then
-  echo "ERROR: ImageMagick font '$FONT' is not registered (check 'convert -list font')." >&2
-  exit 1
+# Define fallback fonts (sans-serif bold preferred)
+FALLBACK_FONTS=("Arial-Bold" "DejaVu-Sans-Bold" "Helvetica-Bold" "Ubuntu-Sans-Condensed-Bold" "DejaVu-Sans-Mono-Bold")
+IM_FONT=""
+for font in "${FALLBACK_FONTS[@]}"; do
+    if convert -list font | grep -q "^[[:space:]]*Font: $font$"; then
+        IM_FONT="$font"
+        break
+    fi
+done
+if [ -z "$IM_FONT" ]; then
+    echo "ERROR: No suitable fallback font found in ImageMagick (check 'convert -list font')." >&2
+    exit 1
 fi
+FONT="$IM_FONT"                # convert -list font
 # Resolve main movie:
 # - Use configured MAIN_MOVIE when it exists and is non-empty.
 # - Otherwise fall back to the first non-empty .mpg in the current directory.
@@ -160,35 +168,53 @@ detect_dvd_format() {
   local file="$1"
 
   local vcodec
-  vcodec="$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name \
-            -of csv=p=0 "$file" 2>/dev/null || true)"
+  vcodec="$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$file" 2>/dev/null || true)"
   [ -n "$vcodec" ] || { echo "ERROR: no video stream found in $file" >&2; exit 1; }
+  # Trim trailing comma
+  vcodec="${vcodec%,}"
+  # ...Or strip all trailing non-alphanumeric characters (safer for rogue spaces/commas):
+  # vcodec=$(echo "$CODEC" | tr -d '[:space:]' | sed 's/[^a-zA-Z0-9]*$//')
   if [ "$vcodec" != "mpeg2video" ]; then
+
     echo "ERROR: $file is encoded as '$vcodec'; DVD-Video authoring requires mpeg2video." >&2
     exit 1
   fi
+  local w h
 
-  local dims
-  dims="$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height \
-          -of csv=s=x:p=0 "$file" 2>/dev/null || true)"
-  [ -n "$dims" ] && [[ "$dims" == *x* ]] || { echo "ERROR: could not read frame dimensions from $file" >&2; exit 1; }
-  local w="${dims%x*}" h="${dims#*x}"
-  [[ "$w" =~ ^[0-9]+$ && "$h" =~ ^[0-9]+$ ]] || { echo "ERROR: unparsable dimensions '$dims' from $file" >&2; exit 1; }
+  w="$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null || true)"
+  h="$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null || true)"
+  if [[ ! "$w" =~ ^[0-9]+$ || ! "$h" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: unparsable dimensions '${w}x${h}' from $file" >&2
+    exit 1
+  fi
+  echo "Video dimensions: ${w}x${h}"
 
   local rate_raw
-  rate_raw="$(ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate \
-              -of csv=p=0 "$file" 2>/dev/null || true)"
-  [ -n "$rate_raw" ] && [[ "$rate_raw" == */* ]] || { echo "ERROR: could not read frame rate from $file" >&2; exit 1; }
+  rate_raw="$(
+    ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null || true
+  )"
 
-  local num="${rate_raw%/*}" den="${rate_raw#*/}"
-  [[ "$num" =~ ^[0-9]+$ && "$den" =~ ^[0-9]+$ && "$den" -ne 0 ]] \
-    || { echo "ERROR: unparsable frame rate '$rate_raw' from $file" >&2; exit 1; }
+  # Remove any accidental whitespace / CR characters.
+  rate_raw="$(printf '%s' "$rate_raw" | tr -d '\r\n[:space:]')"
 
+  [[ "$rate_raw" == */* ]] || {
+    echo "ERROR: could not read frame rate from $file" >&2
+    exit 1
+  }
+  local num="${rate_raw%/*}"
+  local den="${rate_raw#*/}"
+
+  [[ "$num" =~ ^[0-9]+$ && "$den" =~ ^[0-9]+$ && "$den" -ne 0 ]] || {
+    echo "ERROR: unparsable frame rate '$rate_raw' from $file" >&2
+    exit 1
+  }
   local fps_x1000=$(( num * 1000 / den ))
 
   local fmt=""
-  if   [ "$fps_x1000" -ge 24900 ] && [ "$fps_x1000" -le 25100 ]; then fmt="pal"
-  elif [ "$fps_x1000" -ge 29800 ] && [ "$fps_x1000" -le 29980 ]; then fmt="ntsc"
+  if [ "$fps_x1000" -ge 24900 ] && [ "$fps_x1000" -le 25100 ]; then
+    fmt="pal"
+  elif [ "$fps_x1000" -ge 29800 ] && [ "$fps_x1000" -le 29980 ]; then
+    fmt="ntsc"
   else
     echo "ERROR: unsupported frame rate '$rate_raw' in $file." >&2
     exit 1
@@ -198,6 +224,7 @@ detect_dvd_format() {
     echo "ERROR: PAL frame rate detected but height is ${h}px (expected 576) in $file." >&2
     exit 1
   fi
+
   if [ "$fmt" = "ntsc" ] && [ "$h" -ne 480 ]; then
     echo "ERROR: NTSC frame rate detected but height is ${h}px (expected 480) in $file." >&2
     exit 1
@@ -206,12 +233,17 @@ detect_dvd_format() {
   DETECTED_FORMAT="$fmt"
   WIDTH="$w"
   HEIGHT="$h"
-  if [ "$fmt" = "pal" ]; then TARGET="pal-dvd"; FPS="25"; else TARGET="ntsc-dvd"; FPS="30000/1001"; fi
+  if [ "$fmt" = "pal" ]; then
+    TARGET="pal-dvd"
+    FPS="25"
+  else
+    TARGET="ntsc-dvd"
+    FPS="30000/1001"
+  fi
 }
-
 detect_dvd_format "$MAIN_MOVIE"
 echo "Detected format: ${DETECTED_FORMAT^^} (${WIDTH}x${HEIGHT} @ ${FPS}fps)"
-echo "Using subtitle processor: $BDSUP2SUB_BIN"
+echo "Using subtitle processor: $BDSUP2SUB_CMD"
 
 verify_matches_main_format() {
   local file="$1"
@@ -572,12 +604,12 @@ echo "   -> Found ${#idx_files[@]} sub track(s): ${CURRENT_SUB_LABELS[*]}. Defau
     cp "$sub" "${stage_base}.sub"
 
     # Conditionally execute depending on whether we resolved the Qt C++ fork or the Java version
-    if [[ "$BDSUP2SUB_BIN" == *"bdsup2sub++"* ]]; then
+    if [[ "$BDSUP2SUB_CMD" == *"bdsup2sub++"* ]]; then
       run_logged "$LOG_DIR/ts${ts_idx}_bdsup2sub_${i}.log" \
-        env QT_QPA_PLATFORM=offscreen $BDSUP2SUB_BIN --no-verbose -o "${pfx}.xml" "${stage_base}.idx"
+        env QT_QPA_PLATFORM=offscreen $BDSUP2SUB_CMD --no-verbose -o "${pfx}.xml" "${stage_base}.idx"
     else
       run_logged "$LOG_DIR/ts${ts_idx}_bdsup2sub_${i}.log" \
-        $BDSUP2SUB_BIN --no-verbose -o "${pfx}.xml" "${stage_base}.idx"
+        $BDSUP2SUB_CMD --no-verbose -o "${pfx}.xml" "${stage_base}.idx"
     fi
 
     # Verify that bdsup2sub successfully generated the images
@@ -585,7 +617,7 @@ echo "   -> Found ${#idx_files[@]} sub track(s): ${CURRENT_SUB_LABELS[*]}. Defau
     local pngs=( "${pfx}"*.png )
     shopt -u nullglob
     if [ ${#pngs[@]} -eq 0 ]; then
-      echo "ERROR: $BDSUP2SUB_BIN produced no .png frames for $f — subtitle file may be malformed." >&2
+      echo "ERROR: $BDSUP2SUB_CMD produced no .png frames for $f — subtitle file may be malformed." >&2
       exit 1
     fi
 
