@@ -777,7 +777,7 @@ append_titleset_xml() {
 
     XML_TITLESETS+="        <button name=\"b$btn_idx\"> { subtitle = 62; if (g1 eq 1) resume; else jump title 1 chapter 1; } </button>\n"
     btn_idx=$((btn_idx+1))
-    XML_TITLESETS+="        <button name=\"b$btn_idx\"> { g1 = 0; jump vmgm menu; } </button>\n"
+    XML_TITLESETS+="        <button name=\"b$btn_idx\"> { g1 = 0; jump vmgm menu entry title; } </button>\n"
 
     XML_TITLESETS+="        <post> { if (g1 eq 1) resume; else jump title 1 chapter 1; } </post>\n"
     XML_TITLESETS+="      </pgc>\n    </menus>\n"
@@ -893,7 +893,7 @@ if [ ${#EXTRAS_MENU_LABELS[@]} -gt 0 ]; then
   echo " Generating VMGM Extras Menu..."
   VMGM_EXTRAS_MPG="$WORK_DIR/vmgm_extras_menu.mpg"
   EXTRAS_MENU_LABELS+=("Main Menu")
-  EXTRAS_MENU_TARGETS+=("jump vmgm menu;")
+  EXTRAS_MENU_TARGETS+=("jump vmgm menu entry title;")
   build_menu "$VMGM_EXTRAS_MPG" "Extras Menu" "${EXTRAS_MENU_LABELS[@]}"
 fi
 XML_FILE="$WORK_DIR/dvdauthor.xml"
