@@ -6,8 +6,8 @@
 #   1. Scans MAIN_MOVIE and EXTRAS_DIR for .mpg files.
 #   2. Detects PAL/NTSC + resolution from the main movie's own stream data
 #      (frame rate + frame size) and authors the whole disc to match.
-#   3. For every video, looks for matching subtitle .idx/.sub or .sub.idx files,
-#      recognizing patterns like _track{n}_{lang}, _track{n}_{lang}_exp, etc.
+#   3. For every video, looks for matching subtitle .idx/.sub, .sub.idx, or .sup
+#      files, recognizing patterns like _track{n}_{lang}, _track{n}_{lang}_exp, etc.
 #   4. Normalizes language names and selects default subtitles based on config
 #      (e.g., Dutch) falling back to 'track0' if no config match is found.
 #   5. Dynamic VMGM menu & per-titleset subtitle menus.
@@ -114,6 +114,7 @@ if [ -z "$IM_FONT" ]; then
     exit 1
 fi
 FONT="$IM_FONT"                # convert -list font
+
 # Resolve main movie:
 # - Use configured MAIN_MOVIE when it exists and is non-empty.
 # - Otherwise fall back to the first non-empty .mpg in the current directory.
@@ -175,7 +176,6 @@ detect_dvd_format() {
   # ...Or strip all trailing non-alphanumeric characters (safer for rogue spaces/commas):
   # vcodec=$(echo "$CODEC" | tr -d '[:space:]' | sed 's/[^a-zA-Z0-9]*$//')
   if [ "$vcodec" != "mpeg2video" ]; then
-
     echo "ERROR: $file is encoded as '$vcodec'; DVD-Video authoring requires mpeg2video." >&2
     exit 1
   fi
@@ -243,7 +243,7 @@ detect_dvd_format() {
 }
 detect_dvd_format "$MAIN_MOVIE"
 echo "Detected format: ${DETECTED_FORMAT^^} (${WIDTH}x${HEIGHT} @ ${FPS}fps)"
-echo "Using subtitle processor: $BDSUP2SUB_CMD"
+#echo "Using subtitle processor: $BDSUP2SUB_CMD"
 
 verify_matches_main_format() {
   local file="$1"
@@ -353,9 +353,6 @@ build_menu() {
     echo "WARNING: menu '$title_text' has $num_items items and may overflow frame." >&2
   fi
 
-  local max_chars=$(( (WIDTH - left_margin - right_margin) * 10 / (point_size * 6) ))
-  [ "$max_chars" -lt 4 ] && max_chars=4
-
   echo "Building menu: $title_text ($num_items items, ${point_size}pt)"
 
   run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg0.log" \
@@ -370,6 +367,9 @@ build_menu() {
   local y0_arr=() y1_arr=()
   for i in "${!labels[@]}"; do
     local text="${labels[$i]}"
+    local max_chars=$(( (WIDTH - left_margin - right_margin) * 10 / (point_size * 6) ))
+    [ "$max_chars" -lt 4 ] && max_chars=4
+
     if [ "${#text}" -gt "$max_chars" ]; then
       text="${text:0:$((max_chars - 1))}…"
     fi
@@ -449,43 +449,52 @@ process_video_and_subs() {
   base_clean="${base_clean%_PAL}"
 
   shopt -s nullglob
-  local raw_idx_files=(
+  local raw_sub_files=(
     "${base_path}"_*.idx
     "${base_path}"_*.sub.idx
+    "${base_path}"_*.sup
   )
   if [ "$base_path" != "$base_clean" ]; then
-    raw_idx_files+=(
+    raw_sub_files+=(
       "${base_clean}"_*.idx
       "${base_clean}"_*.sub.idx
+      "${base_clean}"_*.sup
     )
   fi
   shopt -u nullglob
 
-  if [ ${#raw_idx_files[@]} -eq 0 ]; then
+  if [ ${#raw_sub_files[@]} -eq 0 ]; then
     echo "    -> No subtitles found for $(basename "$in_mpg")"
     return 0
   fi
 
-  # Deduplicate discovered index files
-  local idx_files=()
+  # Deduplicate discovered files
+  local input_files=()
   local seen_files=" "
-  for f in "${raw_idx_files[@]}"; do
+  for f in "${raw_sub_files[@]}"; do
     if [[ "$seen_files" != *" $f "* ]]; then
       seen_files+="$f "
-      idx_files+=("$f")
+      input_files+=("$f")
     fi
   done
-
-  if [ ${#idx_files[@]} -gt 32 ]; then
-    echo "ERROR: $(basename "$in_mpg") has ${#idx_files[@]} subtitle files; max 32 streams allowed." >&2
+  # DVD-Video allows 32 subpicture streams.
+  if [ ${#input_files[@]} -gt 32 ]; then
+    echo "ERROR: $(basename "$in_mpg") has ${#input_files[@]} subtitle files; max 32 streams allowed." >&2
     exit 1
   fi
 
-  # Verify companion .sub files exist (handling standard .sub and double .sub.sub variants)
-  local sub_files=()
-  for f in "${idx_files[@]}"; do
-    local sub=""
+  # Verify companion .sub files exist (NOTE: subtitle files may be suffixed by standard .sub/.idx and .sub.sub/.sub.idx.)
+  local input_files_clean=()
+  local data_files=()
+  for f in "${input_files[@]}"; do
+    if [[ "$f" == *.sup ]]; then
+      # .sup is self-contained
+      input_files_clean+=("$f")
+      data_files+=("$f")
+      continue
+    fi
 
+    local sub=""
     # 1. Standard double extension: file.sub.idx -> file.sub.sub
     if [[ "$f" == *.sub.idx ]] && [ -f "${f%.sub.idx}.sub.sub" ]; then
       sub="${f%.sub.idx}.sub.sub"
@@ -505,8 +514,13 @@ process_video_and_subs() {
 
     [ -s "$f" ] || { echo "ERROR: subtitle index file is empty: $f" >&2; exit 1; }
     [ -s "$sub" ] || { echo "ERROR: subtitle data file is empty: $sub" >&2; exit 1; }
-    sub_files+=("$sub")
+
+    input_files_clean+=("$f")
+    data_files+=("$sub")
   done
+
+  # Reassign checked input files
+  input_files=("${input_files_clean[@]}")
 
   CURRENT_HAS_SUBS=1
   CURRENT_MUXED_MPG="$WORK_DIR/ts${ts_idx}_muxed.mpg"
@@ -518,14 +532,16 @@ process_video_and_subs() {
   local video_stem="$(basename "$base_path")"
   local video_stem_clean="$(basename "$base_clean")"
 
-  for i in "${!idx_files[@]}"; do
-    local f="${idx_files[$i]}"
+  for i in "${!input_files[@]}"; do
+    local f="${input_files[$i]}"
     local fname="$(basename "$f")"
 
-    # Strip extension (.sub.idx or .idx) cleanly to isolate track suffix
+    # Strip extension (.sub.idx, .idx, or .sup) cleanly to isolate track suffix
     local stem=""
     if [[ "$fname" == *.sub.idx ]]; then
       stem="${fname%.sub.idx}"
+    elif [[ "$fname" == *.sup ]]; then
+      stem="${fname%.sup}"
     else
       stem="${fname%.idx}"
     fi
@@ -606,7 +622,7 @@ process_video_and_subs() {
   CURRENT_DEFAULT_SUBP=$((64 + default_index))
 
 echo "  ----------------------------------------"
-echo " | -> Found ${#idx_files[@]} sub track(s)"
+echo " | -> Found ${#input_files[@]} sub track(s)"
 echo " | Labels:"
 for lbl in "${CURRENT_SUB_LABELS[@]}"; do
   echo " |   - ${lbl}"
@@ -615,44 +631,72 @@ echo " | Default: stream ${default_index} (${CURRENT_SUB_LABELS[$default_index]}
 echo "  ----------------------------------------"
 
   local current_vid="$in_mpg"
-  for i in "${!idx_files[@]}"; do
-    local f="${idx_files[$i]}"
-    local sub="${sub_files[$i]}"
+  for i in "${!input_files[@]}"; do
+    local f="${input_files[$i]}"
+    local data_file="${data_files[$i]}"
     local pfx="$WORK_DIR/ts${ts_idx}_sub_${i}"
     local stage_base="$WORK_DIR/ts${ts_idx}_sub_${i}_input"
+    local bdsup_in=""
 
     # Stage files into clean paths for bdsup2sub.
     # Preserve exact companion basename matching so the internal .idx reference resolves properly.
-    cp "$f" "${stage_base}.idx"
-    if [[ "$sub" == *.sub.sub ]]; then
-      cp "$sub" "${stage_base}.sub.sub"
-      # Create a symlink/copy so bdsup2sub can find it regardless of whether it expects .sub or .sub.sub
-      cp "$sub" "${stage_base}.sub"
+    if [[ "$f" == *.sup ]]; then
+      cp "$f" "${stage_base}.sup"
+      bdsup_in="${stage_base}.sup"
     else
-      cp "$sub" "${stage_base}.sub"
+      cp "$f" "${stage_base}.idx"
+      if [[ "$data_file" == *.sub.sub ]]; then
+        cp "$data_file" "${stage_base}.sub.sub"
+      # Create a symlink/copy so bdsup2sub can find it regardless of whether it expects .sub or .sub.sub
+        cp "$data_file" "${stage_base}.sub"
+      else
+        cp "$data_file" "${stage_base}.sub"
+      fi
+      bdsup_in="${stage_base}.idx"
     fi
 
     # Conditionally execute depending on whether we resolved the Qt C++ fork or the Java version
-    if [[ "$BDSUP2SUB_CMD" == *"bdsup2sub++"* ]]; then
+    # Utilizing array expansion for BDSUP2SUB_CMD to safely preserve path/arguments
+    if [[ "${BDSUP2SUB_CMD[*]}" == *"bdsup2sub++"* ]]; then
       run_logged "$LOG_DIR/ts${ts_idx}_bdsup2sub_${i}.log" \
-        env QT_QPA_PLATFORM=offscreen $BDSUP2SUB_CMD --no-verbose -o "${pfx}.xml" "${stage_base}.idx"
+        env QT_QPA_PLATFORM=offscreen "${BDSUP2SUB_CMD[@]}" --no-verbose -o "${pfx}_bdn.xml" "$bdsup_in"
     else
       run_logged "$LOG_DIR/ts${ts_idx}_bdsup2sub_${i}.log" \
-        $BDSUP2SUB_CMD --no-verbose -o "${pfx}.xml" "${stage_base}.idx"
+        "${BDSUP2SUB_CMD[@]}" --no-verbose -o "${pfx}_bdn.xml" "$bdsup_in"
     fi
 
     # Verify that bdsup2sub successfully generated the images
     shopt -s nullglob
-    local pngs=( "${pfx}"*.png )
+    local pngs=( "${pfx}_bdn"*.png )
     shopt -u nullglob
     if [ ${#pngs[@]} -eq 0 ]; then
-      echo "ERROR: $BDSUP2SUB_CMD produced no .png frames for $f — subtitle file may be malformed." >&2
+      echo "ERROR: bdsup2sub produced no .png frames for $f — subtitle file may be malformed." >&2
       exit 1
     fi
-
+    # When bdsup2sub++ exports XML subtitles, its root tag is <BDN>:
+    #   <BDN Version="0.28" defaultSubtitleStreamName="...">
+    # However, spumux is designed specifically for DVD authoring and expects a <subpictures> root tag:
+    #   <subpictures>
+    #     <stream>
+    #       <spu start="..." end="..." image="...">
+    # Convert BDN XML -> DVDAuthor spumux XML format
+    awk '
+      BEGIN { print "<subpictures>\n  <stream>" }
+      /<Event / {
+        for (i = 1; i <= NF; i++) {
+          if ($i ~ /^InTC=/)  { split($i, a, "\""); start = a[2] }
+          if ($i ~ /^OutTC=/) { split($i, b, "\""); end = b[2] }
+        }
+      }
+      /<Graphic/ {
+        sub(/.*<Graphic[^>]*>/, "")
+        sub(/<\/Graphic>.*/, "")
+        print "    <spu start=\"" start "\" end=\"" end "\" image=\"" $0 "\" />"
+      }
+      END { print "  </stream>\n</subpictures>" }
+    ' "${pfx}_bdn.xml" > "${pfx}.xml"
     local next_vid="$WORK_DIR/ts${ts_idx}_mux_${i}.mpg"
-
-    # Mux directly using the generated XML
+    # Mux directly using the generated DVDAuthor-formatted XML
     run_logged "$LOG_DIR/ts${ts_idx}_spumux_${i}.log" \
       bash -c "spumux -s '$i' '${pfx}.xml' < '$current_vid' > '$next_vid'"
 
@@ -808,7 +852,8 @@ printf '<dvdauthor dest="%s" jumppad="yes" format="%s">\n\n' "$OUT_DIR" "$DETECT
 printf '  <vmgm>\n' >> "$XML_FILE"
 printf '    <fpc>\n      { g1 = 0; subtitle = %d; %s }\n    </fpc>\n' "$MAIN_DEFAULT_SUBP" "$FPC_JUMP" >> "$XML_FILE"
 printf '    <menus>\n      <video format="%s" resolution="%sx%s" />\n' "$DETECTED_FORMAT" "$WIDTH" "$HEIGHT" >> "$XML_FILE"
-printf '      <pgc entry="title">\n' >> "$XML_FILE"
+# printf '      <pgc entry="title">\n' >> "$XML_FILE" ERR:  Unknown entry 'title'
+printf '      <pgc>\n' >> "$XML_FILE"
 printf '        <vob file="%s" />\n' "$VMGM_MPG" >> "$XML_FILE"
 printf '%b' "$VMGM_BUTTONS_XML" >> "$XML_FILE"
 printf '      </pgc>\n    </menus>\n' >> "$XML_FILE"
