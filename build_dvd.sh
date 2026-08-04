@@ -21,8 +21,8 @@ EXTRAS_DIR="./extras"                  # Folder optionally containing extra .mpg
 WORK_DIR="./work"                      # Scratch space, safe to delete after success
 OUT_DIR="./dvd"                        # Final DVD-Video output structure
 DEFAULT_HINT="nl"                      # Substring for default lang (e.g. "nl" or "dutch")
-MENU_SECONDS=8                        # Loop duration for static menus
-FONT="DejaVu-Sans-Bold"               # convert -list font
+MENU_SECONDS=8                         # Loop duration for static menus
+FONT="DejaVu-Sans-Bold"                # convert -list font
 MIN_POINT_SIZE=14                      # Never shrink menu text below this
 MAX_POINT_SIZE=36
 # ----------------------------------------------------------------------------
@@ -30,13 +30,28 @@ MAX_POINT_SIZE=36
 need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing required tool: $1" >&2; exit 1; }; }
 # TODO notify user we need to `apt install ffmpeg` etc, and enable `universe` to install ogmrip...
 # ogmrip is not available in the Ubuntu 24.04 repositories, even with sudo add-apt-repository universe
+# ----------------------------- BDSUP2SUB++ RESOLVER -------------------------
+# bdsup2sub++ isn't in standard repos. Actively hunt for a local dev build
+# before falling back to checking the system PATH.
+BDSUP2SUB_BIN=""
+for candidate in "./VobSub-Utilities/bdsup2sub++" "./VobSub-Utilities/build/bdsup2sub++" "./sup2vobsub/bdsup2sub++" "./sup2vobsub/build/bdsup2sub++" "bdsup2sub++"
+do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    BDSUP2SUB_BIN="$candidate"
+    break
+  fi
+done
+if [ -z "$BDSUP2SUB_BIN" ]; then
+  echo "ERROR: bdsup2sub++ is missing." >&2
+  echo "Ensure https://github.com/prinsbert/VobSub-Utilities is cloned and compiled to ./sup2vobsub/ or ./VobSub-Utilities/ or installed in your system PATH." >&2
+  exit 1
+fi
+# ----------------------------------------------------------------------------
 for t in dvdauthor spumux ffmpeg ffprobe convert subp2pgm subptools; do need "$t"; done
-
 if ! convert -list font 2>/dev/null | grep -qx "  Font: ${FONT}"; then
   echo "ERROR: ImageMagick font '$FONT' is not registered (check 'convert -list font')." >&2
   exit 1
 fi
-
 # Resolve main movie:
 # - Use configured MAIN_MOVIE when it exists and is non-empty.
 # - Otherwise fall back to the first non-empty .mpg in the current directory.
@@ -142,6 +157,7 @@ detect_dvd_format() {
 
 detect_dvd_format "$MAIN_MOVIE"
 echo "Detected format: ${DETECTED_FORMAT^^} (${WIDTH}x${HEIGHT} @ ${FPS}fps)"
+echo "Using subtitle processor: $BDSUP2SUB_BIN"
 
 verify_matches_main_format() {
   local file="$1"
@@ -501,16 +517,21 @@ echo "   -> Found ${#idx_files[@]} sub track(s): ${CURRENT_SUB_LABELS[*]}. Defau
     cp "$f" "${stage_base}.idx"
     cp "$sub" "${stage_base}.sub"
 
-    # Use the offscreen Qt platform backend to render PNGs and the spumux XML headlessly
-    run_logged "$LOG_DIR/ts${ts_idx}_bdsup2sub_${i}.log" \
-      env QT_QPA_PLATFORM=offscreen bdsup2sub++ --no-verbose -o "${pfx}.xml" "${stage_base}.idx"
+    # Conditionally execute depending on whether we resolved the Qt C++ fork or the Java version
+    if [[ "$BDSUP2SUB_BIN" == *"bdsup2sub++"* ]]; then
+      run_logged "$LOG_DIR/ts${ts_idx}_bdsup2sub_${i}.log" \
+        env QT_QPA_PLATFORM=offscreen $BDSUP2SUB_BIN --no-verbose -o "${pfx}.xml" "${stage_base}.idx"
+    else
+      run_logged "$LOG_DIR/ts${ts_idx}_bdsup2sub_${i}.log" \
+        $BDSUP2SUB_BIN --no-verbose -o "${pfx}.xml" "${stage_base}.idx"
+    fi
 
-    # Verify that bdsup2sub++ successfully generated the images
+    # Verify that bdsup2sub successfully generated the images
     shopt -s nullglob
     local pngs=( "${pfx}"*.png )
     shopt -u nullglob
     if [ ${#pngs[@]} -eq 0 ]; then
-      echo "ERROR: bdsup2sub++ produced no .png frames for $f — subtitle file may be malformed." >&2
+      echo "ERROR: $BDSUP2SUB_BIN produced no .png frames for $f — subtitle file may be malformed." >&2
       exit 1
     fi
 
