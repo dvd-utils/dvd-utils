@@ -292,21 +292,44 @@ prettify_filename() {
 }
 print_centered_title() {
   local title="$1"
-  local width=60
-  local len=${#title}
-  local pad=$(( (width - len - 4) / 2 ))
-  [ "$pad" -lt 2 ] && pad=2
-  local dashes=$(printf '%*s' "$pad" '' | tr ' ' '-')
-  echo "  ${dashes}[ ${title} ]${dashes}"
+  local total_width=40
+  local indent="  "
+
+  # Printable width after deducting indent
+  local inner_width=$((total_width - ${#indent}))
+  local title_len=${#title}
+  local remaining=$((inner_width - title_len - 4)) # 4 accounts for "[ " and " ]"
+
+  # Distribute padding, giving remainder to the right side for balance
+  local pad_left=$((remaining / 2))
+  local pad_right=$((remaining - pad_left))
+
+  # Minimum 2 dashes per side if title exceeds width
+  [ "$pad_left" -lt 2 ] && pad_left=2
+  [ "$pad_right" -lt 2 ] && pad_right=2
+
+  local dashes_left=$(printf '%*s' "$pad_left" '' | tr ' ' '-')
+  local dashes_right=$(printf '%*s' "$pad_right" '' | tr ' ' '-')
+
+  echo "${indent}${dashes_left}[ ${title} ]${dashes_right}"
 }
 print_footer() {
   local title="$1"
-  local width=60
-  local len=${#title}
-  local pad=$(( (width - len - 4) / 2 ))
-  [ "$pad" -lt 2 ] && pad=2
-  local dashes=$(printf '%*s' "$pad" '' | tr ' ' '-')
-  echo "  ${dashes}----------${dashes}"
+  local total_width=40
+  local indent="  "
+
+  # If a title is passed, match the exact width of print_centered_title
+  if [ -n "$title" ]; then
+    local header
+    header=$(print_centered_title "$title")
+    local line_len=$((${#header} - ${#indent}))
+    local dashes=$(printf '%*s' "$line_len" '' | tr ' ' '-')
+    echo "${indent}${dashes}"
+  else
+    # Default solid footer spanning full width (40 chars total)
+    local dashes=$(printf '%*s' $((total_width - ${#indent})) '' | tr ' ' '-')
+    echo "${indent}${dashes}"
+  fi
 }
 # ---------------------------------------------------------------------------
 # HELPER: Build a dynamic menu (Graphics + Video + Spumux logic)
@@ -392,10 +415,9 @@ build_menu() {
             -shortest -pix_fmt yuv420p -target "$TARGET" \
             -b:v 6000k -maxrate 9000k -minrate 6000k -bufsize 1835k \
             "${pfx}_blank.mpg"
-
   run_logged "$LOG_DIR/$(basename "$pfx")_ffmpeg_merge.log" \
     ffmpeg -y -i "${pfx}_blank.mpg" -i "${pfx}_bg.png" \
-            -filter_complex "[0:v][1:v]overlay=0:0" -map 0:a -map "[out]" \
+            -filter_complex "[0:v][1:v]overlay=0:0[v]" -map "[v]" -map 0:a \
             -c:a copy -pix_fmt yuv420p -target "$TARGET" -f dvd \
             -b:v 6000k -maxrate 9000k -minrate 6000k -bufsize 1835k \
             "${pfx}_merged.mpg"
@@ -462,7 +484,7 @@ process_video_and_subs() {
   shopt -u nullglob
   if [ ${#raw_sub_files[@]} -eq 0 ]; then
     print_centered_title "$pretty_name"
-    echo " | -> No subtitles found for $(basename "$in_mpg")"
+    echo " | ⓘ No subtitles found for $(basename "$in_mpg")"
     print_footer "$pretty_name"
     return 0
   fi
@@ -624,7 +646,7 @@ process_video_and_subs() {
 
   CURRENT_DEFAULT_SUBP=$((64 + default_index))
   print_centered_title "$pretty_name"
-  echo " | -> Found ${#input_files[@]} sub track(s)"
+  echo " | ⓘ Found ${#input_files[@]} sub track(s)"
   echo " | Labels:"
   for i in "${!CURRENT_SUB_LABELS[@]}"; do
     printf " |   (%d) %s\n" "$i" "${CURRENT_SUB_LABELS[$i]}"
@@ -639,9 +661,10 @@ process_video_and_subs() {
     local pfx="$WORK_DIR/ts${ts_idx}_sub_${i}"
     local stage_base="$WORK_DIR/ts${ts_idx}_sub_${i}_input"
     local bdsup_in=""
-
+    local label="${CURRENT_SUB_LABELS[$i]}"
     # Stage files into clean paths for bdsup2sub.
     # Preserve exact companion basename matching so the internal .idx reference resolves properly.
+    echo " | -> Processing track $i: $label ($(basename "$f"))"
     if [[ "$f" == *.sup ]]; then
       cp "$f" "${stage_base}.sup"
       bdsup_in="${stage_base}.sup"
@@ -659,6 +682,7 @@ process_video_and_subs() {
 
     # Conditionally execute depending on whether we resolved the Qt C++ fork or the Java version
     # Utilizing array expansion for BDSUP2SUB_CMD to safely preserve path/arguments
+    echo " |    Converting to images..."
     if [[ "${BDSUP2SUB_CMD[*]}" == *"bdsup2sub++"* ]]; then
       run_logged "$LOG_DIR/ts${ts_idx}_bdsup2sub_${i}.log" \
         env QT_QPA_PLATFORM=offscreen "${BDSUP2SUB_CMD[@]}" --no-verbose -o "${pfx}_bdn.xml" "$bdsup_in"
@@ -700,6 +724,7 @@ process_video_and_subs() {
       }
       END { print "  </stream>\n</subpictures>" }
     ' "${pfx}_bdn.xml" > "${pfx}.xml"
+    echo " |    Muxing stream $i into video..."
     local next_vid="$WORK_DIR/ts${ts_idx}_mux_${i}.mpg"
     # Mux directly using the generated DVDAuthor-formatted XML
     run_logged "$LOG_DIR/ts${ts_idx}_spumux_${i}.log" \
@@ -792,7 +817,7 @@ echo " Output Directory: $OUT_DIR"
 echo "============================================================="
 
 # --- Process Titleset 1: Main Movie ---
-echo "-> Processing Main Movie: $MAIN_MOVIE"
+echo "ⓘ Processing Main Movie: $MAIN_MOVIE"
 process_video_and_subs "$MAIN_MOVIE" 1
 movie_pretty="$(prettify_filename "$MAIN_MOVIE")"
 append_titleset_xml 1 "$movie_pretty"
@@ -823,7 +848,7 @@ if [ ${#extras_array[@]} -gt 0 ]; then
     verify_matches_main_format "$extra_mpg"
 
     pretty_name="$(prettify_filename "$extra_mpg")"
-    echo "-> Processing Extra $TS_IDX: $pretty_name"
+    echo "ⓘ Processing Extra $TS_IDX: $pretty_name"
     process_video_and_subs "$extra_mpg" "$TS_IDX"
     append_titleset_xml "$TS_IDX" "$pretty_name"
 
@@ -844,7 +869,7 @@ if [ "$TS_IDX" -gt 100 ]; then
   exit 1
 fi
 # --- Generate VMGM Menu (Top Level) ---
-echo "-> Generating VMGM Root Menu..."
+echo "ⓘ Generating VMGM Root Menu..."
 VMGM_MPG="$WORK_DIR/vmgm_menu.mpg"
 build_menu "$VMGM_MPG" "Main Menu" "${VMGM_LABELS[@]}"
 
@@ -867,14 +892,14 @@ printf '  </vmgm>\n\n' >> "$XML_FILE"
 printf '%b' "$XML_TITLESETS" >> "$XML_FILE"
 printf '</dvdauthor>\n' >> "$XML_FILE"
 
-echo "-> Generated dvdauthor XML structure: $XML_FILE"
+echo "ⓘ Generated dvdauthor XML structure: $XML_FILE"
 
 # ---------------------------------------------------------------------------
 # AUTHOR DVD
 # ---------------------------------------------------------------------------
-echo "-> Clearing output directory: $OUT_DIR"
+echo "ⓘ Clearing output directory: $OUT_DIR"
 rm -rf "$OUT_DIR"
-echo "-> Authoring DVD (this may take a moment)..."
+echo "ⓘ Authoring DVD (this may take a moment)..."
 run_logged "$LOG_DIR/dvdauthor.log" dvdauthor -x "$XML_FILE"
 OUT_DIR_ABS="$(cd "$OUT_DIR" && pwd)"
 echo "============================================================="
