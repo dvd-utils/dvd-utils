@@ -25,7 +25,7 @@
 #include "paletteinfo.h"
 #include "../types.h"
 
-#include <QVector>
+#include <QList>
 #include <QMap>
 
 class ImageObject;
@@ -39,10 +39,10 @@ struct PCS
     int frameRate;
     int compositionNumber;
     CompositionState compositionState;
-    bool paletteUpdate;
+    bool paletteUpdate = false;
     int paletteId;
     int numberOfCompositionObjects;
-    QVector<int> objectIds;
+    QList<int> objectIds;
     QMap<int, int> windowIds;       // map of object id to window id
     QMap<int, int> forcedFlags;     // map of object id to forced flag
     QMap<int, int> xPositions;      // map of object id to x position
@@ -52,15 +52,15 @@ struct PCS
 struct WDS
 {
     int numberOfWindows;
-    QVector<int> windowIds;
+    QList<int> windowIds;
     QMap<int, QRect> windows;
 };
 
 struct PDS
 {
-    int paletteId;
-    int paletteVersion;
-    int paletteSize;
+    int paletteId = -1;
+    int paletteVersion = -1;
+    int paletteSize = -1;
     PaletteInfo paletteInfo;
 };
 
@@ -81,11 +81,11 @@ public:
     SubPictureBD();
     SubPictureBD(const SubPictureBD* other);
     SubPictureBD(const SubPictureBD& other);
-    ~SubPictureBD() { }
+    ~SubPictureBD() override { }
 
-    SubPicture* copy();
+    SubPicture* copy() override;
 
-    int imageWidth()
+    int imageWidth() override
     {
         int width;
         if (numberCompObjects == 1)
@@ -103,7 +103,7 @@ public:
         return width;
     }
 
-    int imageHeight()
+    int imageHeight() override
     {
         if (numberCompObjects == 1)
         {
@@ -119,7 +119,7 @@ public:
         }
     }
 
-    int x()
+    int x() override
     {
         if (numberCompObjects == 1)
         {
@@ -129,7 +129,7 @@ public:
                 scaledImageRects[objectIds[0]].x() : scaledImageRects[objectIds[1]].x();
     }
 
-    int y()
+    int y() override
     {
         if (numberCompObjects == 1)
         {
@@ -154,43 +154,44 @@ public:
     int subPictureType() { return type; }
     void setSubPictureType(int subPictureType) { type = subPictureType; }
 
-    bool isForced()
+    bool isForced() override
     {
         bool isForced = false;
 
-        for (int i = 0; i < imageObjectList.size(); ++i)
+        for (auto& imageObject : imageObjectList)
         {
-            if (imageObjectList[i].fragmentList().size() > 0)
+            if (!imageObject.fragmentList().empty())
             {
-                isForced |= imageObjectList[i].isForced();
+                isForced |= imageObject.isForced();
             }
         }
         return isForced;
     }
 
-    void setForced(bool isForced)
+    void setForced(bool isForced) override
     {
-        for (int i = 0; i < imageObjectList.size(); ++i)
+        for (auto key : imageObjectList.keys())
         {
-            if (imageObjectList[i].fragmentList().size() > 0)
+            auto& imageObject = imageObjectList[key];
+            if (!imageObject.fragmentList().empty())
             {
-                imageObjectList[i].setForcedFlags(imageObjectList[i].forcedFlags() | 0x40);
-                forcedFlags[i] = imageObjectList[i].forcedFlags();
+                imageObject.setForcedFlags(isForced ? 0x40 : 0);
+                forcedFlags[key] = imageObject.forcedFlags();
             }
         }
     }
 
-    void setData(PCS pcs, QMap<int, QVector<ODS>> ods, QMap<int, QVector<PaletteInfo>> pds, WDS wds);
+    void setData(const PCS &pcs, QMap<int, QList<ODS>> ods, QMap<int, QList<PaletteInfo>> pds, const WDS &wds);
 
     QMap<int, ImageObject> imageObjectList;
 
-    QMap<int, QVector<PaletteInfo>> palettes;
+    QMap<int, QList<PaletteInfo>> palettes;
 
 private:
     int type = 0;
-    bool paletteUpdate;
+    bool paletteUpdate = false;
     CompositionState compState;
-    int paletteID;
+    int paletteID = -1;
 };
 
 #endif // SUBSPICTUREBD_H

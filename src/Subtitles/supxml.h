@@ -26,15 +26,18 @@
 
 #include <QObject>
 #include <QFile>
+#include <QXmlStreamReader>
+#include <QXmlStreamAttributes>
 #include <QStringList>
 #include <QString>
-#include <QVector>
+#include <QList>
 #include <QScopedPointer>
 
 class SubtitleProcessor;
 class SubPictureXML;
 class QImage;
 class BitStream;
+class XmlHandler;
 
 enum class Resolution : int;
 
@@ -42,13 +45,44 @@ class SupXML : public QObject, public Substream
 {
     Q_OBJECT
 
+    class XmlHandler : public QXmlStreamReader
+    {
+    public:
+        XmlHandler(SupXML* parent) { this->parent = parent; }
+
+        bool characters(const QString &ch);
+        bool endElement(const QString &namespaceURI, const QString &localName, const QString &qName);
+        bool startElement(const QString &namespaceURI, const QString &localName, const QString &qName, const QXmlStreamAttributes &atts);
+
+    private:
+
+        bool valid = false;
+
+        QStringList xmlStates = { "bdn", "description", "name", "language", "format", "events", "event", "graphic" };
+
+        QString txt;
+
+        QList<int> getResolutions(Resolution resolution);
+
+        Resolution getResolution (QString string);
+
+        SubPictureXML *subPicture = nullptr;
+
+        SupXML* parent;
+
+        enum class XmlState { BDN, DESCRIPT, NAME, LANGUAGE, FORMAT, EVENTS, EVENT, GRAPHIC, UNKNOWN };
+
+        XmlState state;
+        XmlState findState(QString string);
+    };
+
 public:
     SupXML(QString fileName, SubtitleProcessor* subtitleProcessor);
     ~SupXML();
 
     void decode(int index);
     void readAllImages();
-    void writeXml(QString filename, QVector<SubPicture*> pics);
+    void writeXml(QString filename, QList<SubPicture*> pics);
 
     int primaryColorIndex() { return _primaryColorIndex; }
     int numFrames();
@@ -56,7 +90,7 @@ public:
 
     qint64 endTime(int index);
     qint64 startTime(int index);
-    qint64 startOffset(int index) { return 0; }
+    qint64 startOffset(int /*index*/) { return 0; }
 
     double getFps() { return fps; }
 
@@ -95,7 +129,7 @@ private:
     QString language = "deu";
     QString xmlFileName;
 
-    QVector<SubPictureXML> subPictures;
+    QList<SubPictureXML> subPictures;
 
     Resolution resolution;
 

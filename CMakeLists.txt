@@ -1,11 +1,24 @@
-# BDSup2Sub++ 核心静态库（不含主窗口 / CLI / Qxt），供 SubtitleTool 等宿主链接。
-# 由宿主工程在 find_package(Qt6 ...) 与 qt_standard_project_setup() 之后 add_subdirectory 本目录。
+cmake_minimum_required(VERSION 3.16)
+project(bdsup2subplusplus LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+cmake_minimum_required(VERSION 3.16)
+project(bdsup2subplusplus LANGUAGES CXX)
+
+# Ensure Qt6 is found so helper commands like qt_add_library are available
+find_package(Qt6 COMPONENTS Core Gui Widgets Xml REQUIRED)
 
 set(BDSUP_SRC_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 if(NOT EXISTS "${BDSUP_SRC_ROOT}/Subtitles/supbd.cpp")
     message(FATAL_ERROR "未找到 BDSup2Sub++ 源码目录 src/Subtitles（仓库不完整）")
 endif()
+
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Xml Test)
+qt_standard_project_setup()
 
 file(GLOB BDSUP_FILTERS CONFIGURE_DEPENDS "${BDSUP_SRC_ROOT}/Filters/*.cpp")
 file(GLOB BDSUP_SUBTITLES CONFIGURE_DEPENDS "${BDSUP_SRC_ROOT}/Subtitles/*.cpp")
@@ -29,7 +42,9 @@ target_link_libraries(bdsup2subplusplus_core PUBLIC
     Qt::Gui
     Qt::Widgets
     Qt::Xml
-    Qt6::Core5Compat
 )
 
-set_target_properties(bdsup2subplusplus_core PROPERTIES AUTOMOC ON)
+include(CTest)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()

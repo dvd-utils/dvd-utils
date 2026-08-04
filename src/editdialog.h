@@ -42,11 +42,11 @@ class EditDialog;
 class EditDialog : public QDialog
 {
     Q_OBJECT
-    
+
 public:
     explicit EditDialog(QWidget *parent = 0, SubtitleProcessor* subtitleProcessor = 0);
     ~EditDialog();
-    
+
     void setIndex(int value);
     int getIndex() { return index; }
 

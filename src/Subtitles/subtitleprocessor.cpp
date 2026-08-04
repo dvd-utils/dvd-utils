@@ -198,7 +198,7 @@ int SubtitleProcessor::getNumForcedFrames()
     return substream->numForcedFrames();
 }
 
-QVector<int> &SubtitleProcessor::getFrameAlpha(int index)
+QList<int> &SubtitleProcessor::getFrameAlpha(int index)
 {
     if (inMode == InputMode::VOBSUB)
     {
@@ -207,7 +207,7 @@ QVector<int> &SubtitleProcessor::getFrameAlpha(int index)
     return supDVD->getFrameAlpha(index);
 }
 
-QVector<int> SubtitleProcessor::getOriginalFrameAlpha(int index)
+QList<int> SubtitleProcessor::getOriginalFrameAlpha(int index)
 {
     if (inMode == InputMode::VOBSUB)
     {
@@ -216,7 +216,7 @@ QVector<int> SubtitleProcessor::getOriginalFrameAlpha(int index)
     return supDVD->getOriginalFrameAlpha(index);
 }
 
-QVector<int> &SubtitleProcessor::getFramePal(int index)
+QList<int> &SubtitleProcessor::getFramePal(int index)
 {
     if (inMode == InputMode::VOBSUB)
     {
@@ -225,7 +225,7 @@ QVector<int> &SubtitleProcessor::getFramePal(int index)
     return supDVD->getFramePal(index);
 }
 
-QVector<int> SubtitleProcessor::getOriginalFramePal(int index)
+QList<int> SubtitleProcessor::getOriginalFramePal(int index)
 {
     if (inMode == InputMode::VOBSUB)
     {
@@ -390,7 +390,7 @@ void SubtitleProcessor::exit()
 
 void SubtitleProcessor::scanSubtitles()
 {
-    subPictures = QVector<SubPicture*>(substream->numFrames());
+    subPictures = QList<SubPicture*>(substream->numFrames());
     SubPicture* picSrc = 0;
 
     double factTS = 1.0;
@@ -608,8 +608,8 @@ void SubtitleProcessor::reScanSubtitles(Resolution oldResolution, double fpsTrgO
 
     if (oldResolution != resolutionTrg)
     {
-        QVector<int> rOld = getResolution(oldResolution);
-        QVector<int> rNew = getResolution(resolutionTrg);
+        QList<int> rOld = getResolution(oldResolution);
+        QList<int> rNew = getResolution(resolutionTrg);
         factX = (double)rNew[0] / (double)rOld[0];
         factY = (double)rNew[1] / (double)rOld[1];
     }
@@ -792,7 +792,7 @@ void SubtitleProcessor::reScanSubtitles(Resolution oldResolution, double fpsTrgO
     }
 }
 
-QVector<int> SubtitleProcessor::getResolution(Resolution resolution)
+QList<int> SubtitleProcessor::getResolution(Resolution resolution)
 {
     return resolutions.at((int) resolution);
 }
@@ -1008,8 +1008,8 @@ void SubtitleProcessor::createSubtitleStream()
 void SubtitleProcessor::writeSub(QString filename)
 {
     QScopedPointer<QFile> out;
-    QVector<int> offsets;
-    QVector<int> timestamps;
+    QList<int> offsets;
+    QList<int> timestamps;
     int frameNum = 0;
     int maxNum;
     QString fn = "";
@@ -1077,7 +1077,7 @@ void SubtitleProcessor::writeSub(QString filename)
                 {
                     subDVD = QSharedPointer<SubDVD>(new SubDVD("", "", this));
                 }
-                QVector<uchar> buf = subDVD->createSubFrame(*subVobTrg, trgBitmap);
+                QList<uchar> buf = subDVD->createSubFrame(*subVobTrg, trgBitmap);
                 out->write((const char*)buf.constData(), buf.size());
                 offset += buf.size();
                 offsets.push_back(offset);
@@ -1091,7 +1091,7 @@ void SubtitleProcessor::writeSub(QString filename)
                 {
                     supDVD = QSharedPointer<SupDVD>(new SupDVD("", "", this));
                 }
-                QVector<uchar> buf = supDVD->createSupFrame(*subVobTrg, trgBitmap);
+                QList<uchar> buf = supDVD->createSupFrame(*subVobTrg, trgBitmap);
                 out->write((const char*)buf.constData(), buf.size());
             }
             else if (outMode == OutputMode::BDSUP)
@@ -1102,7 +1102,7 @@ void SubtitleProcessor::writeSub(QString filename)
                 {
                     supBD = QSharedPointer<SupBD>(new SupBD("", this));
                 }
-                QVector<uchar> buf = supBD->createSupFrame(subPictures[i], trgBitmap, trgPal, exportForced);
+                QList<uchar> buf = supBD->createSupFrame(subPictures[i], trgBitmap, trgPal, exportForced);
                 out->write((const char*)buf.constData(), buf.size());
             }
             else
@@ -1191,12 +1191,12 @@ void SubtitleProcessor::writeSub(QString filename)
     {
         // VobSub - write IDX
         /* return offets as array of ints */
-        QVector<int> ofs(offsets.size());
+        QList<int> ofs(offsets.size());
         for (int i = 0; i < ofs.size(); ++i)
         {
             ofs.replace(i, offsets[i]);
         }
-        QVector<int> ts(timestamps.size());
+        QList<int> ts(timestamps.size());
         for (int i = 0; i < ts.size(); ++i)
         {
             ts.replace(i, timestamps[i]);
@@ -1596,7 +1596,7 @@ void SubtitleProcessor::determineFramePalette(int index)
         }
 
         // set new frame palette
-        QVector<int> paletteFrame(4);
+        QList<int> paletteFrame(4);
         paletteFrame.replace(0, 0);        // black - transparent color
         paletteFrame.replace(1, colIdx);   // primary color
         if (colIdx == 1)
@@ -1619,8 +1619,8 @@ void SubtitleProcessor::determineFramePalette(int index)
         SubstreamDVD* substreamDVD;
         // use palette from loaded VobSub or SUP/IFO
         Palette miniPal(4, true);
-        QVector<int> alpha;
-        QVector<int> paletteFrame;
+        QList<int> alpha;
+        QList<int> paletteFrame;
 
         if (inMode == InputMode::VOBSUB)
         {
@@ -2525,7 +2525,7 @@ Resolution SubtitleProcessor::getResolution(QString string)
     return Resolution::HD_1080;
 }
 
-QVector<int> SubtitleProcessor::getResolutions(Resolution resolution)
+QList<int> SubtitleProcessor::getResolutions(Resolution resolution)
 {
     if (resolution == Resolution::NTSC)
     {

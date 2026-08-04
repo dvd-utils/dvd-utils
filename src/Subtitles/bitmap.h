@@ -21,7 +21,8 @@
 #define BITMAP_H
 
 #include <QImage>
-#include <QVector>
+
+template <typename T> class QList;
 
 class Filter;
 class Palette;
@@ -49,14 +50,14 @@ public:
     int primaryColorIndex(Palette &palette, int alphaThreshold);
 
     Bitmap crop(int x1, int y1, int width, int height);
-    Bitmap convertLm(Palette &palette, int alphaThreshold, QVector<int> &lumaThreshold);
+    Bitmap convertLm(Palette &palette, int alphaThreshold, QList<int> &lumaThreshold);
 
     Bitmap scaleFilter(int sizeX, int sizeY, Palette &palette, Filter &filter);
     Bitmap scaleFilterLm(int sizeX, int sizeY, Palette &palette,
-                          int alphaThreshold, QVector<int> &lumaThreshold, Filter& filter);
+                          int alphaThreshold, QList<int> &lumaThreshold, Filter& filter);
     Bitmap scaleBilinear(int sizeX, int sizeY, Palette &palette);
     Bitmap scaleBilinearLm(int sizeX, int sizeY, Palette &palette,
-                            int alphaThreshold, QVector<int> &lumaThreshold);
+                            int alphaThreshold, QList<int> &lumaThreshold);
 
     PaletteBitmap scaleFilter(int sizeX, int sizeY, Palette &palette, Filter &filter, bool dither);
     PaletteBitmap scaleBilinear(int sizeX, int sizeY, Palette &palette, bool dither);

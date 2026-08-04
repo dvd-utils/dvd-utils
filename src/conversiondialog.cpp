@@ -31,7 +31,6 @@
 #endif
 
 #include <QDoubleValidator>
-#include <QRegularExpression>
 #include <QRegularExpressionValidator>
 #include <QPalette>
 #include <QKeyEvent>
@@ -49,21 +48,14 @@ ConversionDialog::ConversionDialog(QWidget *parent, SubtitleProcessor *subtitleP
     this->settings = settings;
 
     QRegularExpression regex("[0-9]+([.][0-9]+)?|pal|25p|ntsc|30p|24p|50i|60i");
-    fpsSrcValidator = new QRegularExpressionValidator(regex);
+    fpsSrcValidator = new QRegularExpressionValidator();
+    fpsSrcValidator->setRegularExpression(regex);
     fpsTrgValidator = new QRegularExpressionValidator(regex);
+    fpsTrgValidator->setRegularExpression(regex);
     scaleXValidator = new QDoubleValidator;
     scaleYValidator = new QDoubleValidator;
     delayPTSValidator = new QDoubleValidator;
     minTimePTSValidator = new QDoubleValidator;
-
-    connect(ui->sourceFramerateComboBox, SIGNAL(currentIndexChanged(QString)),
-            this, SLOT(on_sourceFramerateComboBox_currentIndexChanged(QString)));
-    connect(ui->sourceFramerateComboBox, SIGNAL(editTextChanged(QString)),
-            this, SLOT(on_sourceFramerateComboBox_editTextChanged(QString)));
-    connect(ui->targetFramerateComboBox, SIGNAL(currentIndexChanged(QString)),
-            this, SLOT(on_targetFramerateComboBox_currentIndexChanged(QString)));
-    connect(ui->targetFramerateComboBox, SIGNAL(editTextChanged(QString)),
-            this, SLOT(on_targetFramerateComboBox_editTextChanged(QString)));
 
     ui->sourceFramerateComboBox->setValidator(fpsSrcValidator);
     ui->sourceFramerateComboBox->setCompleter(0);

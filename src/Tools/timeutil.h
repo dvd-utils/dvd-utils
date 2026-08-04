@@ -22,9 +22,10 @@
 
 #include <QString>
 #include <QRegularExpression>
-#include <QVector>
 
-static QRegularExpression timePattern("(\\d+):(\\d+):(\\d+)[:\\.](\\d+)");
+template <typename T> class QList;
+
+static QRegularExpression timePattern = QRegularExpression("(\\d+):(\\d+):(\\d+)[:\\.](\\d+)");
 
 class TimeUtil
 {
@@ -40,7 +41,7 @@ public:
     static QString ptsToTimeStr(qint64 pts);
     static QString ptsToTimeStrIdx(qint64 pts);
 
-    static QVector<int> msToTime(qint64 ms);
+    static QList<int> msToTime(qint64 ms);
 };
 
 #endif // TIMEUTIL_H

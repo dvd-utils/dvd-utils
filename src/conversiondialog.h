@@ -43,7 +43,7 @@ class ConversionDialog;
 class ConversionDialog : public QDialog
 {
     Q_OBJECT
-    
+
 public:
     explicit ConversionDialog(QWidget *parent = 0, SubtitleProcessor *subtitleProcessor = 0, QSettings* settings = 0);
     ~ConversionDialog();
@@ -52,7 +52,7 @@ public:
 
 protected:
     void keyPressEvent(QKeyEvent *event);
-    
+
 private slots:
     void on_okButton_clicked();
     void on_cancelButton_clicked();

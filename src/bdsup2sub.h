@@ -35,6 +35,7 @@ class SubtitleProcessor;
 class ProgressDialog;
 class QSettings;
 class QTextStream;
+class QxtCommandOptions;
 
 namespace Ui {
 class BDSup2Sub;
@@ -83,6 +84,7 @@ private:
     QSettings* settings = 0;
     bool fromCLI = false;
     QCommandLineParser parser;
+    QxtCommandOptions* options = 0;
 
     QString filter = tr("All Files (*.*);;Subtitle Files (*.idx *.ifo *.sub *.sup *.xml)");
     QString ifoFilter = tr("IFO File (*.ifo)");

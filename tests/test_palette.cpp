@@ -1,5 +1,6 @@
 #include <QtTest/QtTest>
 #include "Subtitles/palette.h"
+#include "Tools/hr_time.h"
 
 class TestPalette : public QObject
 {
@@ -11,6 +12,7 @@ private slots:
     void setArgbPreservesAlpha();
     void transparentIndexFindsLowestAlpha();
     void yCbCrRoundTripBt601();
+    void stopwatchReturnsNonNegativeElapsedTime();
 };
 
 void TestPalette::constructionDefaults()
@@ -20,7 +22,7 @@ void TestPalette::constructionDefaults()
     for (int i = 0; i < palette.size(); ++i)
     {
         QCOMPARE(palette.alpha(i), 0);
-        QCOMPARE(palette.rgb(i), qRgb(0, 0, 0));
+        QCOMPARE(palette.rgb(i), qRgba(0, 0, 0, 0));
     }
 }
 
@@ -28,7 +30,7 @@ void TestPalette::setRgbUpdatesYcbcr()
 {
     Palette palette(2, true);
     palette.setRGB(1, qRgb(255, 128, 0));
-    QCOMPARE(palette.rgb(1), qRgb(255, 128, 0));
+    QCOMPARE(palette.rgb(1), qRgba(255, 128, 0, 0));
     QVector<int> yCbCr = palette.YCbCr(1);
     QVERIFY(yCbCr.size() == 3);
     QVERIFY(yCbCr[0] >= 16 && yCbCr[0] <= 235);
@@ -66,5 +68,17 @@ void TestPalette::yCbCrRoundTripBt601()
     QVERIFY(qBlue(rgb) >= 0 && qBlue(rgb) <= 255);
 }
 
-QTEST_MAIN(TestPalette)
+void TestPalette::stopwatchReturnsNonNegativeElapsedTime()
+{
+    CStopWatch watch;
+    watch.startTimer();
+    QTest::qWait(10);
+    watch.stopTimer();
+
+    const double elapsed = watch.getElapsedTime();
+    QVERIFY(elapsed >= 0.0);
+    QVERIFY(elapsed < 5.0);
+}
+
+QTEST_APPLESS_MAIN(TestPalette)
 #include "test_palette.moc"
