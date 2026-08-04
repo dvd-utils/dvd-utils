@@ -29,10 +29,10 @@ MAX_POINT_SIZE=36
 need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing required tool: $1" >&2; exit 1; }; }
 # TODO notify user we need to `apt install ffmpeg` etc...
 # ---------------------------------------------------------------------------
-# BULLET-PROOF BDSUP2SUB / SUBTITLE TOOL RESOLUTION
+# BDSUP2SUB TOOL RESOLUTION
 # ---------------------------------------------------------------------------
-# Ubuntu 24.04 (Noble) does not provide ogmrip in the standard repositories,
-# even with the Universe repository enabled. Therefore, do not rely on ogmrip/subp2pgm being available through apt.
+# Ubuntu does not provide ogmrip/subp2pgm/bdsup2sub++ in the standard repositories anymore, even with the Universe repository enabled.
+# Therefore, we can not rely on apt and need to look for our own executable.
 #
 # Resolution order:
 #   1. bdsup2sub++ installed in system PATH
@@ -402,10 +402,10 @@ build_menu() {
         -gravity NorthWest -fill white -font "$FONT" -pointsize "$point_size" \
         -annotate +${left_margin}+${y} "$text" \
         "${pfx}_bg_tmp.png" && mv "${pfx}_bg_tmp.png" "${pfx}_bg.png"
-
+    # Use red fill and blue stroke so spumux has 3 distinct colors (transparent, red, blue) to pick masks
     run_logged "$LOG_DIR/$(basename "$pfx")_convert_hl${i}.log" \
       convert "${pfx}_hl.png" \
-        -gravity NorthWest -fill yellow -font "$FONT" -pointsize "$point_size" \
+        -gravity NorthWest -fill red -stroke blue -strokewidth 1 -font "$FONT" -pointsize "$point_size" \
         -annotate +${left_margin}+${y} "$text" \
         "${pfx}_hl_tmp.png" && mv "${pfx}_hl_tmp.png" "${pfx}_hl.png"
   done
@@ -423,7 +423,7 @@ build_menu() {
             "${pfx}_merged.mpg"
   {
     echo '<subpictures><stream>'
-    echo "  <spu force=\"yes\" highlight=\"${pfx}_hl.png\" select=\"${pfx}_hl.png\">"
+    echo "  <spu start=\"0\" force=\"yes\" highlight=\"${pfx}_hl.png\" select=\"${pfx}_hl.png\">"
     for i in "${!labels[@]}"; do
       local up=$(( (i - 1 + num_items) % num_items ))
       local down=$(( (i + 1) % num_items ))
@@ -484,7 +484,7 @@ process_video_and_subs() {
   shopt -u nullglob
   if [ ${#raw_sub_files[@]} -eq 0 ]; then
     print_centered_title "$pretty_name"
-    echo " | ⓘ No subtitles found for $(basename "$in_mpg")"
+    echo " | No subtitles found for $(basename "$in_mpg")"
     print_footer "$pretty_name"
     return 0
   fi
@@ -646,7 +646,7 @@ process_video_and_subs() {
 
   CURRENT_DEFAULT_SUBP=$((64 + default_index))
   print_centered_title "$pretty_name"
-  echo " | ⓘ Found ${#input_files[@]} sub track(s)"
+  echo " | Found ${#input_files[@]} subtitle track(s)"
   echo " | Labels:"
   for i in "${!CURRENT_SUB_LABELS[@]}"; do
     printf " |   (%d) %s\n" "$i" "${CURRENT_SUB_LABELS[$i]}"
@@ -664,7 +664,7 @@ process_video_and_subs() {
     local label="${CURRENT_SUB_LABELS[$i]}"
     # Stage files into clean paths for bdsup2sub.
     # Preserve exact companion basename matching so the internal .idx reference resolves properly.
-    echo " | -> Processing track $i: $label ($(basename "$f"))"
+    echo " | Processing track $i: $label ($(basename "$f"))"
     if [[ "$f" == *.sup ]]; then
       cp "$f" "${stage_base}.sup"
       bdsup_in="${stage_base}.sup"
@@ -766,7 +766,6 @@ append_titleset_xml() {
 
     XML_TITLESETS+="    <menus lang=\"en\">\n      <video format=\"${DETECTED_FORMAT}\" resolution=\"${WIDTH}x${HEIGHT}\" />\n"
     XML_TITLESETS+="      <pgc entry=\"root,subtitle\" pause=\"inf\">\n        <vob file=\"$menu_mpg\" />\n"
-
     local btn_idx=0
     for i in "${!sub_labels[@]}"; do
       local val=$((64 + i))
@@ -848,7 +847,8 @@ if [ ${#extras_array[@]} -gt 0 ]; then
     verify_matches_main_format "$extra_mpg"
 
     pretty_name="$(prettify_filename "$extra_mpg")"
-    echo "ⓘ Processing Extra $TS_IDX: $pretty_name"
+    echo ""
+    echo "  Processing Extra $TS_IDX: $pretty_name"
     process_video_and_subs "$extra_mpg" "$TS_IDX"
     append_titleset_xml "$TS_IDX" "$pretty_name"
 
@@ -869,7 +869,7 @@ if [ "$TS_IDX" -gt 100 ]; then
   exit 1
 fi
 # --- Generate VMGM Menu (Top Level) ---
-echo "ⓘ Generating VMGM Root Menu..."
+echo "Generating VMGM Root Menu..."
 VMGM_MPG="$WORK_DIR/vmgm_menu.mpg"
 build_menu "$VMGM_MPG" "Main Menu" "${VMGM_LABELS[@]}"
 
