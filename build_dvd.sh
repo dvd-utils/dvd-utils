@@ -813,7 +813,7 @@ if [ ${#extras_array[@]} -gt 0 ]; then
 
     pretty_name="$(prettify_filename "$extra_mpg")"
 
-    echo "Processing Extra $TS_IDX: $pretty_name"
+    echo "Processing Extra $TS_IDX: '$pretty_name'"
     process_video_and_subs "$extra_mpg" "$TS_IDX"
     append_titleset_xml "$TS_IDX" "$pretty_name"
 
@@ -875,3 +875,4 @@ echo "==========================================================================
 echo "Done. DVD-Video file structure is in: $OUT_DIR"
 echo "Preview it with: vlc dvd://$OUT_DIR"
 echo "=========================================================================="
+
