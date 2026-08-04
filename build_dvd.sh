@@ -403,10 +403,12 @@ build_menu() {
         -annotate +${left_margin}+${y} "$text" \
         "${pfx}_bg_tmp.png" && mv "${pfx}_bg_tmp.png" "${pfx}_bg.png"
     # Use red fill and blue stroke so spumux has 3 distinct colors (transparent, red, blue) to pick masks
+    #Disable anti-aliasing and force 3 colors to satisfy spumux's 16-color limit
     run_logged "$LOG_DIR/$(basename "$pfx")_convert_hl${i}.log" \
-      convert "${pfx}_hl.png" \
+      convert "${pfx}_hl.png" +antialias \
         -gravity NorthWest -fill red -stroke blue -strokewidth 1 -font "$FONT" -pointsize "$point_size" \
         -annotate +${left_margin}+${y} "$text" \
+        -colors 3 \
         "${pfx}_hl_tmp.png" && mv "${pfx}_hl_tmp.png" "${pfx}_hl.png"
   done
   run_logged "$LOG_DIR/$(basename "$pfx")_ffmpeg_blank.log" \
