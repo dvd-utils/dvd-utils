@@ -386,19 +386,19 @@ build_menu() {
         -annotate +${left_margin}+${y} "$text" \
         "${pfx}_hl_tmp.png" && mv "${pfx}_hl_tmp.png" "${pfx}_hl.png"
   done
-
   run_logged "$LOG_DIR/$(basename "$pfx")_ffmpeg_blank.log" \
     ffmpeg -y -f lavfi -i "color=c=black:s=${menu_w}x${menu_h}:d=${MENU_SECONDS}:r=${FPS}" \
             -f lavfi -i "anullsrc=r=48000:cl=stereo" \
             -shortest -pix_fmt yuv420p -target "$TARGET" \
+            -b:v 6000k -maxrate 9000k -minrate 6000k -bufsize 1835k \
             "${pfx}_blank.mpg"
 
   run_logged "$LOG_DIR/$(basename "$pfx")_ffmpeg_merge.log" \
     ffmpeg -y -i "${pfx}_blank.mpg" -i "${pfx}_bg.png" \
-            -filter_complex "[0:v][1:v]overlay=0:0" \
+            -filter_complex "[0:v][1:v]overlay=0:0" -map 0:a -map "[out]" \
             -c:a copy -pix_fmt yuv420p -target "$TARGET" -f dvd \
+            -b:v 6000k -maxrate 9000k -minrate 6000k -bufsize 1835k \
             "${pfx}_merged.mpg"
-
   {
     echo '<subpictures><stream>'
     echo "  <spu force=\"yes\" highlight=\"${pfx}_hl.png\" select=\"${pfx}_hl.png\">"
@@ -740,7 +740,7 @@ append_titleset_xml() {
     build_menu "$menu_mpg" "$menu_title" "${labels[@]}"
 
     XML_TITLESETS+="    <menus lang=\"en\">\n      <video format=\"${DETECTED_FORMAT}\" resolution=\"${WIDTH}x${HEIGHT}\" />\n"
-    XML_TITLESETS+="      <pgc entry=\"root,subtitle\">\n        <vob file=\"$menu_mpg\" />\n"
+    XML_TITLESETS+="      <pgc entry=\"root,subtitle\" pause=\"inf\">\n        <vob file=\"$menu_mpg\" />\n"
 
     local btn_idx=0
     for i in "${!sub_labels[@]}"; do
@@ -859,7 +859,7 @@ printf '<dvdauthor dest="%s" jumppad="yes">\n\n' "$OUT_DIR" >> "$XML_FILE"
 printf '  <vmgm>\n' >> "$XML_FILE"
 printf '    <fpc>\n      { g1 = 0; subtitle = %d; %s }\n    </fpc>\n' "$MAIN_DEFAULT_SUBP" "$FPC_JUMP" >> "$XML_FILE"
 printf '    <menus>\n      <video format="%s" resolution="%sx%s" />\n' "$DETECTED_FORMAT" "$WIDTH" "$HEIGHT" >> "$XML_FILE"
-printf '      <pgc>\n' >> "$XML_FILE"
+printf '      <pgc pause="inf">\n' >> "$XML_FILE"
 printf '        <vob file="%s" />\n' "$VMGM_MPG" >> "$XML_FILE"
 printf '%b' "$VMGM_BUTTONS_XML" >> "$XML_FILE"
 printf '      </pgc>\n    </menus>\n' >> "$XML_FILE"
@@ -876,10 +876,9 @@ echo "-> Clearing output directory: $OUT_DIR"
 rm -rf "$OUT_DIR"
 echo "-> Authoring DVD (this may take a moment)..."
 run_logged "$LOG_DIR/dvdauthor.log" dvdauthor -x "$XML_FILE"
-
-echo ""
+OUT_DIR_ABS="$(cd "$OUT_DIR" && pwd)"
 echo "============================================================="
 echo " DVD BUILD COMPLETE"
-echo " Structure: $OUT_DIR"
-echo " Preview:   vlc dvd://$OUT_DIR"
+echo " Structure: $OUT_DIR_ABS"
+echo " Preview:   vlc dvd://$OUT_DIR_ABS"
 echo "============================================================="
