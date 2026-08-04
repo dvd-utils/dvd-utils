@@ -674,7 +674,7 @@ process_video_and_subs() {
       cp "$f" "${stage_base}.idx"
       if [[ "$data_file" == *.sub.sub ]]; then
         cp "$data_file" "${stage_base}.sub.sub"
-      # Create a symlink/copy so bdsup2sub can find it regardless of whether it expects .sub or .sub.sub
+        # Create a symlink/copy so bdsup2sub can find it regardless of whether it expects .sub or .sub.sub
         cp "$data_file" "${stage_base}.sub"
       else
         cp "$data_file" "${stage_base}.sub"
@@ -686,13 +686,10 @@ process_video_and_subs() {
     # Utilizing array expansion for BDSUP2SUB_CMD to safely preserve path/arguments
     echo " |    Converting to images..."
     if [[ "${BDSUP2SUB_CMD[*]}" == *"bdsup2sub++"* ]]; then
-      run_logged "$LOG_DIR/ts${ts_idx}_bdsup2sub_${i}.log" \
-        env QT_QPA_PLATFORM=offscreen "${BDSUP2SUB_CMD[@]}" --no-verbose -o "${pfx}_bdn.xml" "$bdsup_in"
+      run_logged "$LOG_DIR/ts${ts_idx}_bdsup2sub_${i}.log" env QT_QPA_PLATFORM=offscreen "${BDSUP2SUB_CMD[@]}" --no-verbose -o "${pfx}_bdn.xml" "$bdsup_in"
     else
-      run_logged "$LOG_DIR/ts${ts_idx}_bdsup2sub_${i}.log" \
-        "${BDSUP2SUB_CMD[@]}" --no-verbose -o "${pfx}_bdn.xml" "$bdsup_in"
+      run_logged "$LOG_DIR/ts${ts_idx}_bdsup2sub_${i}.log" "${BDSUP2SUB_CMD[@]}" --no-verbose -o "${pfx}_bdn.xml" "$bdsup_in"
     fi
-
     # Verify that bdsup2sub successfully generated the images
     shopt -s nullglob
     local pngs=( "${pfx}_bdn"*.png )
@@ -701,7 +698,7 @@ process_video_and_subs() {
       echo "ERROR: bdsup2sub produced no .png frames for $f (subtitle file may be malformed)." >&2
       exit 1
     fi
-    # Quantize PNGs to 4 colors to satisfy spumux's DVD subtitle requirements
+    # Quantize PNGs to 4 colors to satisfy spumux's DVD subtitle requirements # TODO is this really necessary?
     for png in "${pngs[@]}"; do
       convert "$png" -alpha on -colors 4 +dither PNG8:"${png}.tmp" && mv "${png}.tmp" "$png"
     done
