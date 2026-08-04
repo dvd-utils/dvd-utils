@@ -29,25 +29,77 @@ MAX_POINT_SIZE=36
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing required tool: $1" >&2; exit 1; }; }
 # TODO notify user we need to `apt install ffmpeg` etc, and enable `universe` to install ogmrip...
-# ogmrip is not available in the Ubuntu 24.04 repositories, even with sudo add-apt-repository universe
-# ----------------------------- BDSUP2SUB++ RESOLVER -------------------------
-# bdsup2sub++ isn't in standard repos. Actively hunt for a local dev build
-# before falling back to checking the system PATH.
-BDSUP2SUB_BIN=""
-for candidate in "./VobSub-Utilities/bdsup2sub++" "./VobSub-Utilities/build/bdsup2sub++" "./sup2vobsub/bdsup2sub++" "./sup2vobsub/build/bdsup2sub++" "bdsup2sub++"
-do
-  if command -v "$candidate" >/dev/null 2>&1; then
-    BDSUP2SUB_BIN="$candidate"
-    break
+# ---------------------------------------------------------------------------
+# BULLET-PROOF BDSUP2SUB / SUBTITLE TOOL RESOLUTION
+# ---------------------------------------------------------------------------
+# Ubuntu 24.04 (Noble) does not provide ogmrip in the standard repositories,
+# even with the Universe repository enabled. Therefore, do not rely on
+# ogmrip/subp2pgm being available through apt.
+#
+# Resolution order:
+#   1. bdsup2sub++ installed in system PATH
+#   2. Local bdsup2sub++ development builds
+#   3. bdsup2sub (original Java wrapper) in system PATH
+#   4. Local bdsup2sub.jar via Java
+#
+# The resolved command is stored in the BDSUP2SUB_CMD array so it can be
+# safely invoked with:
+#   "${BDSUP2SUB_CMD[@]}" <arguments>
+# ---------------------------------------------------------------------------
+
+BDSUP2SUB_CMD=()
+
+# 1. Prefer the native bdsup2sub++ executable from PATH.
+if command -v bdsup2sub++ >/dev/null 2>&1; then
+  BDSUP2SUB_CMD=("$(command -v bdsup2sub++)")
+
+# 2. Look for local development/build copies of bdsup2sub++.
+else
+  for candidate in "./VobSub-Utilities/bdsup2sub++" "./VobSub-Utilities/build/bdsup2sub++" "./sup2vobsub/bdsup2sub++" "./sup2vobsub/build/bdsup2sub++"
+  do
+    if [ -x "$candidate" ]; then
+      BDSUP2SUB_CMD=("$candidate")
+      break
+    fi
+  done
+
+  # 3. Fall back to the original Java bdsup2sub wrapper in PATH.
+  if [ ${#BDSUP2SUB_CMD[@]} -eq 0 ] && command -v bdsup2sub >/dev/null 2>&1; then
+    BDSUP2SUB_CMD=("$(command -v bdsup2sub)")
+
+  # 4. Fall back to a local bdsup2sub.jar.
+  elif [ ${#BDSUP2SUB_CMD[@]} -eq 0 ] &&
+       command -v java >/dev/null 2>&1 &&
+       [ -f "./bdsup2sub.jar" ]; then
+    BDSUP2SUB_CMD=("java" "-jar" "./bdsup2sub.jar")
   fi
-done
-if [ -z "$BDSUP2SUB_BIN" ]; then
-  echo "ERROR: bdsup2sub++ is missing." >&2
-  echo "Ensure https://github.com/prinsbert/VobSub-Utilities is cloned and compiled to ./sup2vobsub/ or ./VobSub-Utilities/ or installed in your system PATH." >&2
+fi
+
+# No supported subtitle conversion tool was found.
+if [ ${#BDSUP2SUB_CMD[@]} -eq 0 ]; then
+  echo "ERROR: No supported BDSUP2SUB subtitle converter was found." >&2
+  echo >&2
+  echo "Searched for:" >&2
+  echo "  - bdsup2sub++ in system PATH" >&2
+  echo "  - ./VobSub-Utilities/bdsup2sub++" >&2
+  echo "  - ./VobSub-Utilities/build/bdsup2sub++" >&2
+  echo "  - ./sup2vobsub/bdsup2sub++" >&2
+  echo "  - ./sup2vobsub/build/bdsup2sub++" >&2
+  echo "  - bdsup2sub in system PATH" >&2
+  echo "  - ./bdsup2sub.jar via Java" >&2
+  echo >&2
+  echo "Install or compile bdsup2sub++ from:" >&2
+  echo "https://github.com/prinsbert/VobSub-Utilities" >&2
+  echo >&2
+  echo "Expected local build locations:" >&2
+  echo "  ./sup2vobsub/" >&2
+  echo "  ./VobSub-Utilities/" >&2
   exit 1
 fi
+echo "Using subtitle converter: ${BDSUP2SUB_CMD[*]}"
 # ----------------------------------------------------------------------------
 for t in dvdauthor spumux ffmpeg ffprobe convert subp2pgm subptools; do need "$t"; done
+
 if ! convert -list font 2>/dev/null | grep -qx "  Font: ${FONT}"; then
   echo "ERROR: ImageMagick font '$FONT' is not registered (check 'convert -list font')." >&2
   exit 1
