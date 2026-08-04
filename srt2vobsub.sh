@@ -31,6 +31,7 @@ SHADOW_OFFSET="+1, +1"                 # spumux wants this exact "+N, +N" form
 HALIGN="center"                        # left | center | right
 VALIGN="bottom"                        # top | center | bottom
 ASPECT="4:3"                           # spumux only accepts 4:3 or 16:9
+VIDEO_INPUT=""
 
 usage() {
   cat <<EOF
@@ -56,6 +57,8 @@ Usage: $0 <input.srt> <output_basename> [options]
   --align left|center|right    Horizontal alignment (default: $HALIGN)
   --valign top|center|bottom   Vertical alignment (default: $VALIGN)
   --aspect 4:3|16:9            Target display aspect ratio (default: $ASPECT)
+  --video PATH                 Existing MPEG-PS file to mux subtitles into instead of
+                                generating a dummy clip
 
 Example:
   $0 spa.srt spa --format ntsc --fill-color 'rgba(255,255,0,255)'
@@ -80,6 +83,7 @@ while [ $# -gt 0 ]; do
     --align)              HALIGN="$2"; shift 2 ;;
     --valign)             VALIGN="$2"; shift 2 ;;
     --aspect)             ASPECT="$2"; shift 2 ;;
+    --video)              VIDEO_INPUT="$2"; shift 2 ;;
     -h|--help)            usage ;;
     *) echo "Unknown option: $1" >&2; usage ;;
   esac
@@ -150,43 +154,49 @@ sed 's/^/    /' "$XML"
 # generate a dummy clip just long enough to cover the last subtitle's end
 # time (+3s of padding).
 # ---------------------------------------------------------------------------
-echo "==> Determining required video duration..."
-# Locate the last timecode in the .srt file
-LAST_END_LINE=$(grep -oE '[0-9]{2}:[0-9]{2}:[0-9]{2},[0-9]{3} --> [0-9]{2}:[0-9]{2}:[0-9]{2},[0-9]{3}' "$SRT" | tail -1 || true)
-[ -n "$LAST_END_LINE" ] || { echo "Couldn't find any timecodes in $SRT" >&2; exit 1; }
-
-LAST_END=$(echo "$LAST_END_LINE" | awk '{print $3}' | tr ',' '.')
-# - ${LAST_END%.*} strips the .fff milliseconds off the end (e.g. 01:02:03.450 → 01:02:03)
-# - prefixing `read` with `IFS=:` tells `read` to split only for that one command on colons instead of whitespace, so '01:02:03' → H='01' M='02' S='03'
-#   (Because the assignment is a prefix on a single command rather than a separate IFS=: statement, it doesn't leak into the rest of the script: bare IFS=: on its own line would silently break every later word-split until we reset it)
-IFS=: read -r H M S <<< "${LAST_END%.*}"
-# Duration in seconds
-DURATION=$(( 10#$H * 3600 + 10#$M * 60 + 10#$S + 3 ))
-FRAMES=$(( DURATION * FPS_INT ))
-
-echo "    Required: ${DURATION}s (~${FRAMES} frames) (last subtitle ends at ${LAST_END})"
-SUITABLE_DUMMY=""
-# Look for a cached dummy video in the current directory (e.g., dummy_pal_5000s.mpg)
-for vid in dummy_${FORMAT}_*s.mpg; do
-  [ -e "$vid" ] || continue
-  # Extract duration in seconds using native bash substitution
-  VID_DUR="${vid#dummy_${FORMAT}_}"
-  VID_DUR="${VID_DUR%s.mpg}"
-  if [[ "$VID_DUR" =~ ^[0-9]+$ ]] && [ "$VID_DUR" -ge "$DURATION" ]; then
-    SUITABLE_DUMMY="$vid"
-    break
-  fi
-done
-if [ -n "$SUITABLE_DUMMY" ]; then
-  echo "==> Found existing cached dummy video: $SUITABLE_DUMMY"
-  DUMMY_VIDEO="$SUITABLE_DUMMY"
+if [ -n "$VIDEO_INPUT" ]; then
+  [ -f "$VIDEO_INPUT" ] || { echo "Video not found: $VIDEO_INPUT" >&2; exit 1; }
+  DUMMY_VIDEO="$VIDEO_INPUT"
+  echo "==> Using provided video for muxing: $DUMMY_VIDEO"
 else
-  DUMMY_VIDEO="dummy_${FORMAT}_${DURATION}s.mpg"
-  echo "==> Generating new dummy video ($DUMMY_VIDEO) with mencoder..."
-# We trick mencoder into reading an endless stream of null bytes from /dev/zero,
-# interpreting them as raw YV12 video (which produces a solid green frame).
-# We encode exactly enough frames to cover the subtitle duration.
-  mencoder /dev/zero -demuxer rawvideo -rawvideo w="${WIDTH}":h="${HEIGHT}":fps="${FPS}":format=yv12 -ovc lavc -lavcopts vcodec=mpeg2video -of mpeg -mpegopts format=dvd:tsaf -frames "${FRAMES}" -nosound -quiet -o "$DUMMY_VIDEO" 2>/dev/null
+  echo "==> Determining required video duration..."
+  # Locate the last timecode in the .srt file
+  LAST_END_LINE=$(grep -oE '[0-9]{2}:[0-9]{2}:[0-9]{2},[0-9]{3} --> [0-9]{2}:[0-9]{2}:[0-9]{2},[0-9]{3}' "$SRT" | tail -1 || true)
+  [ -n "$LAST_END_LINE" ] || { echo "Couldn't find any timecodes in $SRT" >&2; exit 1; }
+
+  LAST_END=$(echo "$LAST_END_LINE" | awk '{print $3}' | tr ',' '.')
+  # - ${LAST_END%.*} strips the .fff milliseconds off the end (e.g. 01:02:03.450 → 01:02:03)
+  # - prefixing `read` with `IFS=:` tells `read` to split only for that one command on colons instead of whitespace, so '01:02:03' → H='01' M='02' S='03'
+  #   (Because the assignment is a prefix on a single command rather than a separate IFS=: statement, it doesn't leak into the rest of the script: bare IFS=: on its own line would silently break every later word-split until we reset it)
+  IFS=: read -r H M S <<< "${LAST_END%.*}"
+  # Duration in seconds
+  DURATION=$(( 10#$H * 3600 + 10#$M * 60 + 10#$S + 3 ))
+  FRAMES=$(( DURATION * FPS_INT ))
+
+  echo "    Required: ${DURATION}s (~${FRAMES} frames) (last subtitle ends at ${LAST_END})"
+  SUITABLE_DUMMY=""
+  # Look for a cached dummy video in the current directory (e.g., dummy_pal_5000s.mpg)
+  for vid in dummy_${FORMAT}_*s.mpg; do
+    [ -e "$vid" ] || continue
+    # Extract duration in seconds using native bash substitution
+    VID_DUR="${vid#dummy_${FORMAT}_}"
+    VID_DUR="${VID_DUR%s.mpg}"
+    if [[ "$VID_DUR" =~ ^[0-9]+$ ]] && [ "$VID_DUR" -ge "$DURATION" ]; then
+      SUITABLE_DUMMY="$vid"
+      break
+    fi
+  done
+  if [ -n "$SUITABLE_DUMMY" ]; then
+    echo "==> Found existing cached dummy video: $SUITABLE_DUMMY"
+    DUMMY_VIDEO="$SUITABLE_DUMMY"
+  else
+    DUMMY_VIDEO="dummy_${FORMAT}_${DURATION}s.mpg"
+    echo "==> Generating new dummy video ($DUMMY_VIDEO) with mencoder..."
+  # We trick mencoder into reading an endless stream of null bytes from /dev/zero,
+  # interpreting them as raw YV12 video (which produces a solid green frame).
+  # We encode exactly enough frames to cover the subtitle duration.
+    mencoder /dev/zero -demuxer rawvideo -rawvideo w="${WIDTH}":h="${HEIGHT}":fps="${FPS}":format=yv12 -ovc lavc -lavcopts vcodec=mpeg2video -of mpeg -mpegopts format=dvd:tsaf -frames "${FRAMES}" -nosound -quiet -o "$DUMMY_VIDEO" 2>/dev/null
+  fi
 fi
 
 # Old ffmpeg solution, for reference:
