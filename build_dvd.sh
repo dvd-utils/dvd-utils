@@ -716,7 +716,15 @@ process_video_and_subs() {
     #
     # Pass $WORK_DIR to awk and use case-insensitive regex for bdn.xml tags
     # Extract X and Y coordinates from <Graphic> tag so spumux places the cropped PNG correctly
-    awk -v workdir="$WORK_DIR" '
+    # Convert HH:MM:SS:FF to HH:MM:SS.mmm to bypass spumux's frame parsing bug
+    awk -v workdir="$WORK_DIR" -v fps="$FPS" '
+      function tc_to_ms(tc,   t, hh, mm, ss, ff, ms) {
+        split(tc, t, ":");
+        hh = t[1]; mm = t[2]; ss = t[3]; ff = t[4];
+        if (fps == 25) ms = ff * 40;
+        else ms = ff * 33;
+        return sprintf("%02d:%02d:%02d.%03d", hh, mm, ss, ms);
+      }
       BEGIN { print "<subpictures>\n  <stream>" }
       /<[Ee]vent / {
         for (i = 1; i <= NF; i++) {
@@ -729,9 +737,13 @@ process_video_and_subs() {
         if (match($0, /[Xx]="[0-9]+"/)) { x = substr($0, RSTART+3, RLENGTH-4) }
         if (match($0, /[Yy]="[0-9]+"/)) { y = substr($0, RSTART+3, RLENGTH-4) }
 
-        sub(/.*<[Gg]raphic[^>]*>/, "")
-        sub(/<\/[Gg]raphic>.*/, "")
-        print "    <spu start=\"" start "\" end=\"" end "\" image=\"" workdir "/" $0 "\" xoffset=\"" x "\" yoffset=\"" y "\" />"
+        sub(/.*<[Gg]raphic[^>]*>/, "", $0)
+        sub(/<\/[Gg]raphic>.*/, "", $0)
+        gsub(/^[ \t\r\n]+|[ \t\r\n]+$/, "", $0)
+
+        if (start != "" && end != "" && $0 != "") {
+          print "    <spu start=\"" tc_to_ms(start) "\" end=\"" tc_to_ms(end) "\" image=\"" workdir "/" $0 "\" xoffset=\"" x "\" yoffset=\"" y "\" />"
+        }
       }
       END { print "  </stream>\n</subpictures>" }
     ' "${pfx}_bdn.xml" > "${pfx}.xml"
@@ -744,7 +756,6 @@ process_video_and_subs() {
     [ -s "$next_vid" ] || { echo "ERROR: spumux produced an empty output muxing subtitle track $i into $(basename "$in_mpg")." >&2; exit 1; }
     current_vid="$next_vid"
   done
-
   cp "$current_vid" "$CURRENT_MUXED_MPG"
 }
 
