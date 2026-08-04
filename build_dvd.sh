@@ -53,8 +53,7 @@ if command -v bdsup2sub++ >/dev/null 2>&1; then
 
 # 2. Look for local development/build copies of bdsup2sub++.
 else
-  for candidate in "./VobSub-Utilities/bdsup2sub++" "./VobSub-Utilities/build/bdsup2sub++" "./sup2vobsub/bdsup2sub++" "./sup2vobsub/build/bdsup2sub++"
-  do
+  for candidate in "./VobSub-Utilities/bdsup2sub++" "./VobSub-Utilities/build/bdsup2sub++" "./sup2vobsub/bdsup2sub++" "./sup2vobsub/build/bdsup2sub++"; do
     if [ -x "$candidate" ]; then
       BDSUP2SUB_CMD=("$candidate")
       break
@@ -122,7 +121,6 @@ if [ ! -f "$MAIN_MOVIE" ] || [ ! -s "$MAIN_MOVIE" ]; then
   shopt -s nullglob
   candidates=( *.mpg )
   shopt -u nullglob
-
   MAIN_MOVIE=""
   for candidate in "${candidates[@]}"; do
     if [ -s "$candidate" ]; then
@@ -130,43 +128,37 @@ if [ ! -f "$MAIN_MOVIE" ] || [ ! -s "$MAIN_MOVIE" ]; then
       break
     fi
   done
-
-  [ -n "$MAIN_MOVIE" ] || {
-    echo "ERROR: no usable main .mpg file found in current directory." >&2
-    exit 1
-  }
-
+  [ -n "$MAIN_MOVIE" ] || { echo "ERROR: no usable main .mpg file found in current directory." >&2; exit 1; }
   echo "Using fallback main movie: $MAIN_MOVIE"
 fi
 
 # Extras are optional. A missing/empty extras directory simply means no extras menu.
 if [ ! -d "$EXTRAS_DIR" ]; then
-  echo "Extras directory not found: $EXTRAS_DIR (continuing without extras)"
+  echo "Extras directory not found @ $EXTRAS_DIR. Continuing without extras."
   EXTRAS_DIR=""
 fi
-
 rm -rf "$WORK_DIR"
 mkdir -p "$WORK_DIR" "$OUT_DIR"
-
 LOG_DIR="$WORK_DIR/logs"
 mkdir -p "$LOG_DIR"
-
 run_logged() {
   local log="$1"; shift
   if ! "$@" >"$log" 2>&1; then
-    echo "ERROR: command failed: $* " >&2
-    echo "----- last 20 lines of $log -----" >&2
+    echo "=============================================================" >&2
+    echo " ERROR: Command failed!" >&2
+    echo " Command: $*" >&2
+    echo "-------------------------------------------------------------" >&2
+    echo " Last 20 lines of $log:" >&2
     tail -n 20 "$log" >&2
+    echo "=============================================================" >&2
     return 1
   fi
 }
-
 # ---------------------------------------------------------------------------
 # FORMAT DETECTION (PAL vs NTSC, resolution)
 # ---------------------------------------------------------------------------
 detect_dvd_format() {
   local file="$1"
-
   local vcodec
   vcodec="$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$file" 2>/dev/null || true)"
   [ -n "$vcodec" ] || { echo "ERROR: no video stream found in $file" >&2; exit 1; }
@@ -178,21 +170,16 @@ detect_dvd_format() {
     echo "ERROR: $file is encoded as '$vcodec'; DVD-Video authoring requires mpeg2video." >&2
     exit 1
   fi
-  local w h
 
+  local w h
   w="$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null || true)"
   h="$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null || true)"
   if [[ ! "$w" =~ ^[0-9]+$ || ! "$h" =~ ^[0-9]+$ ]]; then
     echo "ERROR: unparsable dimensions '${w}x${h}' from $file" >&2
     exit 1
   fi
-  echo "Video dimensions: ${w}x${h}"
-
   local rate_raw
-  rate_raw="$(
-    ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null || true
-  )"
-
+  rate_raw="$(ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null || true)"
   # Remove any accidental whitespace / CR characters.
   rate_raw="$(printf '%s' "$rate_raw" | tr -d '\r\n[:space:]')"
 
@@ -202,7 +189,6 @@ detect_dvd_format() {
   }
   local num="${rate_raw%/*}"
   local den="${rate_raw#*/}"
-
   [[ "$num" =~ ^[0-9]+$ && "$den" =~ ^[0-9]+$ && "$den" -ne 0 ]] || {
     echo "ERROR: unparsable frame rate '$rate_raw' from $file" >&2
     exit 1
@@ -228,7 +214,6 @@ detect_dvd_format() {
     echo "ERROR: NTSC frame rate detected but height is ${h}px (expected 480) in $file." >&2
     exit 1
   fi
-
   DETECTED_FORMAT="$fmt"
   export VIDEO_FORMAT="${fmt^^}"
   WIDTH="$w"
@@ -240,6 +225,11 @@ detect_dvd_format() {
     TARGET="ntsc-dvd"
     FPS="30000/1001"
   fi
+  echo "+-- Format Detection: $(basename "$file")"
+  echo "|  Codec: $vcodec"
+  echo "|  Resolution: ${w}x${h}"
+  echo "|  Frame Rate: $rate_raw"
+  echo "+-- Standard: ${fmt^^} ($TARGET)"
 }
 detect_dvd_format "$MAIN_MOVIE"
 echo "Detected format: ${DETECTED_FORMAT^^} (${WIDTH}x${HEIGHT} @ ${FPS}fps)"
@@ -271,49 +261,24 @@ normalize_language() {
   lang_lower="${lang_lower// /_}"
 
   case "$lang_lower" in
-    dutch|nl|nld|dut)
-      NORM_LANG_CODE="nl"
-      NORM_LANG_LABEL="Dutch"
-      ;;
-    eng|en)
-      NORM_LANG_CODE="en"
-      NORM_LANG_LABEL="English"
-      ;;
-    eng_sdh|en_sdh)
-      NORM_LANG_CODE="en"
-      NORM_LANG_LABEL="English (SDH)"
-      ;;
-    spa_latin_american|spa_la|es_la|spanish_latin_american)
-      NORM_LANG_CODE="es"
-      NORM_LANG_LABEL="Spanish (Latin American)"
-      ;;
-    spa|es|esl|spanish)
-      NORM_LANG_CODE="es"
-      NORM_LANG_LABEL="Spanish"
-      ;;
-    fra|fre|fr|french)
-      NORM_LANG_CODE="fr"
-      NORM_LANG_LABEL="French"
-      ;;
-    ger|deu|de|german)
-      NORM_LANG_CODE="de"
-      NORM_LANG_LABEL="German"
-      ;;
+    nl|nld|dut|dutch) NORM_LANG_CODE="nl"; NORM_LANG_LABEL="Dutch" ;;
+    en|eng|english) NORM_LANG_CODE="en"; NORM_LANG_LABEL="English" ;;
+    eng_sdh|en_sdh) NORM_LANG_CODE="en"; NORM_LANG_LABEL="English (SDH)" ;;
+    spa_latin_american|spa_latin_america|spa_la|es_la|spanish_latin_american|spanish_latin_america) NORM_LANG_CODE="es"; NORM_LANG_LABEL="Spanish (Latin American)" ;;
+    spa|es|esl|spanish) NORM_LANG_CODE="es"; NORM_LANG_LABEL="Spanish" ;;
+    fra|fre|fr|french) NORM_LANG_CODE="fr"; NORM_LANG_LABEL="French" ;;
+    ger|deu|de|german) NORM_LANG_CODE="de"; NORM_LANG_LABEL="German" ;;
     *)
       NORM_LANG_CODE="${lang_lower%%_*}"
       NORM_LANG_CODE="${NORM_LANG_CODE%%-*}"
-
       local clean_label="${raw//_/ }"
       clean_label="${clean_label//-/ }"
-
       if [[ "$lang_lower" == *sdh* ]]; then
         clean_label="$(echo "$clean_label" | sed -E 's/[sS][dD][hH]//g' | xargs)"
         clean_label="${clean_label} (SDH)"
       fi
-
       local words=($clean_label)
-      NORM_LANG_LABEL="${words[@]^}"
-      ;;
+      NORM_LANG_LABEL="${words[@]^}" ;;
   esac
 }
 
@@ -325,7 +290,24 @@ prettify_filename() {
   local words=(${base//_/ })
   echo "${words[@]^}"
 }
-
+print_centered_title() {
+  local title="$1"
+  local width=60
+  local len=${#title}
+  local pad=$(( (width - len - 4) / 2 ))
+  [ "$pad" -lt 2 ] && pad=2
+  local dashes=$(printf '%*s' "$pad" '' | tr ' ' '-')
+  echo "  ${dashes}[ ${title} ]${dashes}"
+}
+print_footer() {
+  local title="$1"
+  local width=60
+  local len=${#title}
+  local pad=$(( (width - len - 4) / 2 ))
+  [ "$pad" -lt 2 ] && pad=2
+  local dashes=$(printf '%*s' "$pad" '' | tr ' ' '-')
+  echo "  ${dashes}----------${dashes}"
+}
 # ---------------------------------------------------------------------------
 # HELPER: Build a dynamic menu (Graphics + Video + Spumux logic)
 # ---------------------------------------------------------------------------
@@ -338,36 +320,50 @@ build_menu() {
   local pfx="${out_mpg%.mpg}"
 
   [ "$num_items" -gt 0 ] || { echo "ERROR: build_menu called with zero labels for $out_mpg" >&2; exit 1; }
+  # DVD spec limits to 36 buttons per PGC
+  [ "$num_items" -le 36 ] || { echo "ERROR: Too many buttons ($num_items) in menu '$title_text'. Max 36." >&2; exit 1; }
+
+  # Hardcode menu dimensions to standard DVD to avoid scaling mismatches with ffmpeg -target
+  local menu_w=720
+  local menu_h=576
+  if [ "$DETECTED_FORMAT" = "ntsc" ]; then
+    menu_h=480
+  fi
 
   local top_margin=100
-  local line_h=$(( (HEIGHT - top_margin - 60) / num_items ))
+  local line_h=$(( (menu_h - top_margin - 60) / num_items ))
   [ "$line_h" -gt 70 ] && line_h=70
   [ "$line_h" -lt $((MIN_POINT_SIZE + 6)) ] && line_h=$((MIN_POINT_SIZE + 6))
   local point_size=$(( line_h / 2 + 10 ))
   [ "$point_size" -gt "$MAX_POINT_SIZE" ] && point_size=$MAX_POINT_SIZE
   [ "$point_size" -lt "$MIN_POINT_SIZE" ] && point_size=$MIN_POINT_SIZE
-  local left_margin=$(( WIDTH / 6 ))
-  local right_margin=$(( WIDTH / 20 ))
+  local left_margin=$(( menu_w / 6 ))
+  local right_margin=$(( menu_w / 20 ))
 
-  if [ $(( top_margin + num_items * line_h )) -gt "$HEIGHT" ]; then
+  if [ $(( top_margin + num_items * line_h )) -gt "$menu_h" ]; then
     echo "WARNING: menu '$title_text' has $num_items items and may overflow frame." >&2
   fi
-
-  echo "Building menu: $title_text ($num_items items, ${point_size}pt)"
-
+  echo "+-- Building Menu: $title_text"
+  echo "|  Target: ${menu_w}x${menu_h} (${DETECTED_FORMAT^^})"
+  echo "|  Layout: $num_items items @ ${point_size}pt"
+  echo "|  Buttons:"
+  for i in "${!labels[@]}"; do
+    printf "|    %d - %s\n" "$i" "${labels[$i]}"
+  done
+  echo "+-- Muxing menu stream..."
   run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg0.log" \
-    convert -size "${WIDTH}x${HEIGHT}" xc:black \
+    convert -size "${menu_w}x${menu_h}" xc:black \
       -gravity NorthWest -fill white -font "$FONT" -pointsize 42 \
       -annotate +${left_margin}+$((top_margin - 60)) "$title_text" \
       "${pfx}_bg.png"
 
   run_logged "$LOG_DIR/$(basename "$pfx")_convert_hl0.log" \
-    convert -size "${WIDTH}x${HEIGHT}" xc:none "${pfx}_hl.png"
+    convert -size "${menu_w}x${menu_h}" xc:none "${pfx}_hl.png"
 
   local y0_arr=() y1_arr=()
   for i in "${!labels[@]}"; do
     local text="${labels[$i]}"
-    local max_chars=$(( (WIDTH - left_margin - right_margin) * 10 / (point_size * 6) ))
+    local max_chars=$(( (menu_w - left_margin - right_margin) * 10 / (point_size * 6) ))
     [ "$max_chars" -lt 4 ] && max_chars=4
 
     if [ "${#text}" -gt "$max_chars" ]; then
@@ -377,21 +373,22 @@ build_menu() {
     y0_arr[$i]=$((y - (point_size + 10)))
     y1_arr[$i]=$((y + 15))
 
+    # Use temporary file for ImageMagick to prevent corruption
     run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg${i}.log" \
       convert "${pfx}_bg.png" \
         -gravity NorthWest -fill white -font "$FONT" -pointsize "$point_size" \
         -annotate +${left_margin}+${y} "$text" \
-        "${pfx}_bg.png"
+        "${pfx}_bg_tmp.png" && mv "${pfx}_bg_tmp.png" "${pfx}_bg.png"
 
     run_logged "$LOG_DIR/$(basename "$pfx")_convert_hl${i}.log" \
       convert "${pfx}_hl.png" \
         -gravity NorthWest -fill yellow -font "$FONT" -pointsize "$point_size" \
         -annotate +${left_margin}+${y} "$text" \
-        "${pfx}_hl.png"
+        "${pfx}_hl_tmp.png" && mv "${pfx}_hl_tmp.png" "${pfx}_hl.png"
   done
 
   run_logged "$LOG_DIR/$(basename "$pfx")_ffmpeg_blank.log" \
-    ffmpeg -y -f lavfi -i "color=c=black:s=${WIDTH}x${HEIGHT}:d=${MENU_SECONDS}:r=${FPS}" \
+    ffmpeg -y -f lavfi -i "color=c=black:s=${menu_w}x${menu_h}:d=${MENU_SECONDS}:r=${FPS}" \
             -f lavfi -i "anullsrc=r=48000:cl=stereo" \
             -shortest -pix_fmt yuv420p -target "$TARGET" \
             "${pfx}_blank.mpg"
@@ -408,7 +405,7 @@ build_menu() {
     for i in "${!labels[@]}"; do
       local up=$(( (i - 1 + num_items) % num_items ))
       local down=$(( (i + 1) % num_items ))
-      echo "    <button name=\"b$i\" x0=\"$((left_margin - 20))\" y0=\"${y0_arr[$i]}\" x1=\"$((WIDTH - left_margin))\" y1=\"${y1_arr[$i]}\" up=\"b$up\" down=\"b$down\" />"
+      echo "    <button name=\"b$i\" x0=\"$((left_margin - 20))\" y0=\"${y0_arr[$i]}\" x1=\"$((menu_w - left_margin))\" y1=\"${y1_arr[$i]}\" up=\"b$up\" down=\"b$down\" />"
     done
     echo '  </spu>'
     echo '</stream></subpictures>'
@@ -430,7 +427,7 @@ VMGM_TARGETS=()
 CURRENT_SUB_LABELS=()
 CURRENT_HAS_SUBS=0
 CURRENT_MUXED_MPG=""
-CURRENT_DEFAULT_SUBP=62 # 62 = off
+CURRENT_DEFAULT_SUBP=62 # 62 = off (DVD convention)
 
 # ---------------------------------------------------------------------------
 # HELPER: Discover and Mux Subtitles for a given Title
@@ -438,6 +435,7 @@ CURRENT_DEFAULT_SUBP=62 # 62 = off
 process_video_and_subs() {
   local in_mpg="$1"
   local ts_idx="$2"
+  local pretty_name="$(prettify_filename "$in_mpg")"
 
   CURRENT_SUB_LABELS=()
   CURRENT_HAS_SUBS=0
@@ -462,12 +460,12 @@ process_video_and_subs() {
     )
   fi
   shopt -u nullglob
-
   if [ ${#raw_sub_files[@]} -eq 0 ]; then
-    echo "    -> No subtitles found for $(basename "$in_mpg")"
+    print_centered_title "$pretty_name"
+    echo " | -> No subtitles found for $(basename "$in_mpg")"
+    print_footer "$pretty_name"
     return 0
   fi
-
   # Deduplicate discovered files
   local input_files=()
   local seen_files=" "
@@ -495,15 +493,20 @@ process_video_and_subs() {
     fi
 
     local sub=""
-    # 1. Standard double extension: file.sub.idx -> file.sub.sub
-    if [[ "$f" == *.sub.idx ]] && [ -f "${f%.sub.idx}.sub.sub" ]; then
-      sub="${f%.sub.idx}.sub.sub"
-    # 2. Standard single extension: file.idx -> file.sub
-    elif [[ "$f" == *.idx ]] && [ -f "${f%.idx}.sub" ]; then
-      sub="${f%.idx}.sub"
-    # 3. Fallback double check: file.idx -> file.sub.sub
-    elif [[ "$f" == *.idx ]] && [ -f "${f%.idx}.sub.sub" ]; then
-      sub="${f%.idx}.sub.sub"
+    # Clean VobSub companion logic to correctly handle all extension permutations
+    if [[ "$f" == *.sub.idx ]]; then
+      if [ -f "${f%.sub.idx}.sub" ]; then
+        sub="${f%.sub.idx}.sub"
+      # Standard double extension: file.sub.idx -> file.sub.sub
+      elif [ -f "${f%.sub.idx}.sub.sub" ]; then
+        sub="${f%.sub.idx}.sub.sub"
+      fi
+    elif [[ "$f" == *.idx ]]; then
+      if [ -f "${f%.idx}.sub" ]; then
+        sub="${f%.idx}.sub"
+      elif [ -f "${f%.idx}.sub.sub" ]; then
+        sub="${f%.idx}.sub.sub"
+      fi
     fi
 
     if [ -z "$sub" ] || [ ! -f "$sub" ]; then
@@ -538,6 +541,7 @@ process_video_and_subs() {
 
     # Strip extension (.sub.idx, .idx, or .sup) cleanly to isolate track suffix
     local stem=""
+
     if [[ "$fname" == *.sub.idx ]]; then
       stem="${fname%.sub.idx}"
     elif [[ "$fname" == *.sup ]]; then
@@ -619,15 +623,14 @@ process_video_and_subs() {
   fi
 
   CURRENT_DEFAULT_SUBP=$((64 + default_index))
-
-echo "  ----------------------------------------"
-echo " | -> Found ${#input_files[@]} sub track(s)"
-echo " | Labels:"
-for lbl in "${CURRENT_SUB_LABELS[@]}"; do
-  echo " |   - ${lbl}"
-done
-echo " | Default: stream ${default_index} (${CURRENT_SUB_LABELS[$default_index]})"
-echo "  ----------------------------------------"
+  print_centered_title "$pretty_name"
+  echo " | -> Found ${#input_files[@]} sub track(s)"
+  echo " | Labels:"
+  for i in "${!CURRENT_SUB_LABELS[@]}"; do
+    printf " |   (%d) %s\n" "$i" "${CURRENT_SUB_LABELS[$i]}"
+  done
+  printf " | Default: stream %d (%s)\n" "$default_index" "${CURRENT_SUB_LABELS[$default_index]}"
+  print_footer "$pretty_name"
 
   local current_vid="$in_mpg"
   for i in "${!input_files[@]}"; do
@@ -669,9 +672,10 @@ echo "  ----------------------------------------"
     local pngs=( "${pfx}_bdn"*.png )
     shopt -u nullglob
     if [ ${#pngs[@]} -eq 0 ]; then
-      echo "ERROR: bdsup2sub produced no .png frames for $f — subtitle file may be malformed." >&2
+      echo "ERROR: bdsup2sub produced no .png frames for $f (subtitle file may be malformed)." >&2
       exit 1
     fi
+
     # When bdsup2sub++ exports XML subtitles, its root tag is <BDN>:
     #   <BDN Version="0.28" defaultSubtitleStreamName="...">
     # However, spumux is designed specifically for DVD authoring and expects a <subpictures> root tag:
@@ -679,22 +683,23 @@ echo "  ----------------------------------------"
     #     <stream>
     #       <spu start="..." end="..." image="...">
     # Convert BDN XML -> DVDAuthor spumux XML format
-    awk '
+    #
+    # Pass $WORK_DIR to awk and use case-insensitive regex for bdn.xml tags
+    awk -v workdir="$WORK_DIR" '
       BEGIN { print "<subpictures>\n  <stream>" }
-      /<Event / {
+      /<[Ee]vent / {
         for (i = 1; i <= NF; i++) {
-          if ($i ~ /^InTC=/)  { split($i, a, "\""); start = a[2] }
-          if ($i ~ /^OutTC=/) { split($i, b, "\""); end = b[2] }
+          if ($i ~ /^[Ii]nTC=/)  { split($i, a, "\""); start = a[2] }
+          if ($i ~ /^[Oo]utTC=/) { split($i, b, "\""); end = b[2] }
         }
       }
-      /<Graphic/ {
-        sub(/.*<Graphic[^>]*>/, "")
-        sub(/<\/Graphic>.*/, "")
-        print "    <spu start=\"" start "\" end=\"" end "\" image=\"" $0 "\" />"
+      /<[Gg]raphic[ >]/ {
+        sub(/.*<[Gg]raphic[^>]*>/, "")
+        sub(/<\/[Gg]raphic>.*/, "")
+        print "    <spu start=\"" start "\" end=\"" end "\" image=\"" workdir "/" $0 "\" />"
       }
       END { print "  </stream>\n</subpictures>" }
     ' "${pfx}_bdn.xml" > "${pfx}.xml"
-
     local next_vid="$WORK_DIR/ts${ts_idx}_mux_${i}.mpg"
     # Mux directly using the generated DVDAuthor-formatted XML
     run_logged "$LOG_DIR/ts${ts_idx}_spumux_${i}.log" \
@@ -726,7 +731,8 @@ append_titleset_xml() {
 
   if [ "$has_subs" -eq 1 ]; then
     local menu_mpg="$WORK_DIR/ts${ts_idx}_menu.mpg"
-    local labels=("${sub_labels[@]}" "No subtitles" "Extras Menu")
+    # TODO "Extras Menu" / "Main Menu"?
+    local labels=("${sub_labels[@]}" "No subtitles" "Main Menu")
 
     local menu_title="Subtitles: ${title_pretty}"
     [ "$ts_idx" -eq 1 ] && menu_title="Movie Subtitles"
@@ -758,7 +764,8 @@ append_titleset_xml() {
     done
   fi
 
-  XML_TITLESETS+="      <pgc entry=\"title\">\n"
+  # dvdauthor throws "Unknown entry 'title'" if entry attribute is set inside <titles>. Removed `entry="title"`.
+  XML_TITLESETS+="      <pgc>\n"
   if [ "$has_subs" -eq 1 ]; then
     # Each titleset gets its own default subtitle stream applied on entry,
     # rather than silently inheriting whatever the VMGM fpc set for the
@@ -777,10 +784,15 @@ append_titleset_xml() {
 # ORCHESTRATION PIPELINE
 # ===========================================================================
 
-echo "Menu graphics will be built at ${WIDTH}x${HEIGHT} (${DETECTED_FORMAT^^}, target=${TARGET})"
+echo "Menu graphics will be built at standard DVD resolution ${WIDTH}x${HEIGHT} (${DETECTED_FORMAT^^}, target=${TARGET})"
+echo "============================================================="
+echo " DVD BUILDER INITIATED"
+echo " Target Format: ${DETECTED_FORMAT^^} (${WIDTH}x${HEIGHT})"
+echo " Output Directory: $OUT_DIR"
+echo "============================================================="
 
 # --- Process Titleset 1: Main Movie ---
-echo "Processing Main Movie: $MAIN_MOVIE"
+echo "-> Processing Main Movie: $MAIN_MOVIE"
 process_video_and_subs "$MAIN_MOVIE" 1
 movie_pretty="$(prettify_filename "$MAIN_MOVIE")"
 append_titleset_xml 1 "$movie_pretty"
@@ -805,15 +817,13 @@ else
   extras_array=()
 fi
 shopt -u nullglob
-
 if [ ${#extras_array[@]} -gt 0 ]; then
   for extra_mpg in "${extras_array[@]}"; do
     [ -s "$extra_mpg" ] || { echo "ERROR: extra file is empty: $extra_mpg" >&2; exit 1; }
     verify_matches_main_format "$extra_mpg"
 
     pretty_name="$(prettify_filename "$extra_mpg")"
-
-    echo "Processing Extra $TS_IDX: '$pretty_name'"
+    echo "-> Processing Extra $TS_IDX: $pretty_name"
     process_video_and_subs "$extra_mpg" "$TS_IDX"
     append_titleset_xml "$TS_IDX" "$pretty_name"
 
@@ -829,14 +839,12 @@ if [ ${#extras_array[@]} -gt 0 ]; then
 else
   echo "No extras found in $EXTRAS_DIR"
 fi
-
 if [ "$TS_IDX" -gt 100 ]; then
   echo "ERROR: too many titlesets ($((TS_IDX - 1))); DVD-Video supports at most 99." >&2
   exit 1
 fi
-
 # --- Generate VMGM Menu (Top Level) ---
-echo "Generating VMGM Extras Menu..."
+echo "-> Generating VMGM Root Menu..."
 VMGM_MPG="$WORK_DIR/vmgm_menu.mpg"
 build_menu "$VMGM_MPG" "Main Menu" "${VMGM_LABELS[@]}"
 
@@ -844,12 +852,10 @@ VMGM_BUTTONS_XML=""
 for i in "${!VMGM_TARGETS[@]}"; do
   VMGM_BUTTONS_XML+="        <button name=\"b$i\"> { ${VMGM_TARGETS[$i]} } </button>\n"
 done
-
 # --- Assemble final dvdauthor.xml ---
 XML_FILE="$WORK_DIR/dvdauthor.xml"
 printf '<?xml version="1.0"?>\n' > "$XML_FILE"
 printf '<dvdauthor dest="%s" jumppad="yes">\n\n' "$OUT_DIR" >> "$XML_FILE"
-
 printf '  <vmgm>\n' >> "$XML_FILE"
 printf '    <fpc>\n      { g1 = 0; subtitle = %d; %s }\n    </fpc>\n' "$MAIN_DEFAULT_SUBP" "$FPC_JUMP" >> "$XML_FILE"
 printf '    <menus>\n      <video format="%s" resolution="%sx%s" />\n' "$DETECTED_FORMAT" "$WIDTH" "$HEIGHT" >> "$XML_FILE"
@@ -858,21 +864,22 @@ printf '        <vob file="%s" />\n' "$VMGM_MPG" >> "$XML_FILE"
 printf '%b' "$VMGM_BUTTONS_XML" >> "$XML_FILE"
 printf '      </pgc>\n    </menus>\n' >> "$XML_FILE"
 printf '  </vmgm>\n\n' >> "$XML_FILE"
-
 printf '%b' "$XML_TITLESETS" >> "$XML_FILE"
 printf '</dvdauthor>\n' >> "$XML_FILE"
 
-echo "Generated $XML_FILE"
+echo "-> Generated dvdauthor XML structure: $XML_FILE"
 
 # ---------------------------------------------------------------------------
 # AUTHOR DVD
 # ---------------------------------------------------------------------------
+echo "-> Clearing output directory: $OUT_DIR"
 rm -rf "$OUT_DIR"
+echo "-> Authoring DVD (this may take a moment)..."
 run_logged "$LOG_DIR/dvdauthor.log" dvdauthor -x "$XML_FILE"
 
-echo
-echo "=========================================================================="
-echo "Done. DVD-Video file structure is in: $OUT_DIR"
-echo "Preview it with: vlc dvd://$OUT_DIR"
-echo "=========================================================================="
-
+echo ""
+echo "============================================================="
+echo " DVD BUILD COMPLETE"
+echo " Structure: $OUT_DIR"
+echo " Preview:   vlc dvd://$OUT_DIR"
+echo "============================================================="
