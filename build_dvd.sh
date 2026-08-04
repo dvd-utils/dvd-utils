@@ -462,7 +462,7 @@ process_video_and_subs() {
   shopt -u nullglob
 
   if [ ${#raw_idx_files[@]} -eq 0 ]; then
-    echo "   -> No subtitles found for $(basename "$in_mpg")"
+    echo "    -> No subtitles found for $(basename "$in_mpg")"
     return 0
   fi
 
@@ -481,17 +481,28 @@ process_video_and_subs() {
     exit 1
   fi
 
-  # Verify companion .sub files exist
+  # Verify companion .sub files exist (handling standard .sub and double .sub.sub variants)
   local sub_files=()
   for f in "${idx_files[@]}"; do
     local sub=""
-    if [[ "$f" == *.sub.idx ]]; then
-      sub="${f%.sub.idx}.sub"
-    else
+
+    # 1. Standard double extension: file.sub.idx -> file.sub.sub
+    if [[ "$f" == *.sub.idx ]] && [ -f "${f%.sub.idx}.sub.sub" ]; then
+      sub="${f%.sub.idx}.sub.sub"
+    # 2. Standard single extension: file.idx -> file.sub
+    elif [[ "$f" == *.idx ]] && [ -f "${f%.idx}.sub" ]; then
       sub="${f%.idx}.sub"
+    # 3. Fallback double check: file.idx -> file.sub.sub
+    elif [[ "$f" == *.idx ]] && [ -f "${f%.idx}.sub.sub" ]; then
+      sub="${f%.idx}.sub.sub"
     fi
 
-    [ -f "$sub" ] || { echo "ERROR: missing companion .sub file ($sub) for $f" >&2; exit 1; }
+    if [ -z "$sub" ] || [ ! -f "$sub" ]; then
+      echo "ERROR: missing companion .sub file for index '$f'" >&2
+      echo "       Expected either '${f%.idx}.sub' or '${f%.sub.idx}.sub.sub'" >&2
+      exit 1
+    fi
+
     [ -s "$f" ] || { echo "ERROR: subtitle index file is empty: $f" >&2; exit 1; }
     [ -s "$sub" ] || { echo "ERROR: subtitle data file is empty: $sub" >&2; exit 1; }
     sub_files+=("$sub")
@@ -511,9 +522,13 @@ process_video_and_subs() {
     local f="${idx_files[$i]}"
     local fname="$(basename "$f")"
 
-    # Strip .sub.idx or .idx extension
-    local stem="${fname%.idx}"
-    stem="${stem%.sub}"
+    # Strip extension (.sub.idx or .idx) cleanly to isolate track suffix
+    local stem=""
+    if [[ "$fname" == *.sub.idx ]]; then
+      stem="${fname%.sub.idx}"
+    else
+      stem="${fname%.idx}"
+    fi
 
     # Extract suffix after video prefix
     local suffix="$stem"
@@ -590,7 +605,14 @@ process_video_and_subs() {
 
   CURRENT_DEFAULT_SUBP=$((64 + default_index))
 
-echo "   -> Found ${#idx_files[@]} sub track(s): ${CURRENT_SUB_LABELS[*]}. Default is stream $default_index (${CURRENT_SUB_LABELS[$default_index]})."
+echo "  ----------------------------------------"
+echo " | -> Found ${#idx_files[@]} sub track(s)"
+echo " | Labels:"
+for lbl in "${CURRENT_SUB_LABELS[@]}"; do
+  echo " |   - ${lbl}"
+done
+echo " | Default: stream ${default_index} (${CURRENT_SUB_LABELS[$default_index]})"
+echo "  ----------------------------------------"
 
   local current_vid="$in_mpg"
   for i in "${!idx_files[@]}"; do
@@ -599,9 +621,16 @@ echo "   -> Found ${#idx_files[@]} sub track(s): ${CURRENT_SUB_LABELS[*]}. Defau
     local pfx="$WORK_DIR/ts${ts_idx}_sub_${i}"
     local stage_base="$WORK_DIR/ts${ts_idx}_sub_${i}_input"
 
-    # Stage files into clean paths for bdsup2sub
+    # Stage files into clean paths for bdsup2sub.
+    # Preserve exact companion basename matching so the internal .idx reference resolves properly.
     cp "$f" "${stage_base}.idx"
-    cp "$sub" "${stage_base}.sub"
+    if [[ "$sub" == *.sub.sub ]]; then
+      cp "$sub" "${stage_base}.sub.sub"
+      # Create a symlink/copy so bdsup2sub can find it regardless of whether it expects .sub or .sub.sub
+      cp "$sub" "${stage_base}.sub"
+    else
+      cp "$sub" "${stage_base}.sub"
+    fi
 
     # Conditionally execute depending on whether we resolved the Qt C++ fork or the Java version
     if [[ "$BDSUP2SUB_CMD" == *"bdsup2sub++"* ]]; then
@@ -633,7 +662,6 @@ echo "   -> Found ${#idx_files[@]} sub track(s): ${CURRENT_SUB_LABELS[*]}. Defau
 
   cp "$current_vid" "$CURRENT_MUXED_MPG"
 }
-
 # ---------------------------------------------------------------------------
 # HELPER: Generate XML chunk for a single Titleset
 # ---------------------------------------------------------------------------
