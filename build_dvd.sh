@@ -30,6 +30,8 @@ source "$SCRIPT_DIR/generate_dvd_with_menus/subtitles.sh"
 source "$SCRIPT_DIR/generate_dvd_with_menus/html_preview.sh"
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing required tool: $1" >&2; exit 1; }; }
+
+# ----------------------------- TOOL CHECKS ----------------------------------
 # TODO notify user we need to `apt install ffmpeg` etc...
 # ---------------------------------------------------------------------------
 # BDSUP2SUB TOOL RESOLUTION
@@ -57,10 +59,7 @@ if command -v bdsup2sub++ >/dev/null 2>&1; then
 # 2. Look for local development/build copies of bdsup2sub++.
 else
   for candidate in "./VobSub-Utilities/bdsup2sub++" "./VobSub-Utilities/build/bdsup2sub++" "./sup2vobsub/bdsup2sub++" "./sup2vobsub/build/bdsup2sub++"; do
-    if [ -x "$candidate" ]; then
-      BDSUP2SUB_CMD=("$candidate")
-      break
-    fi
+    if [ -x "$candidate" ]; then BDSUP2SUB_CMD=("$candidate"); break; fi
   done
 
   # 3. Fall back to the original Java bdsup2sub wrapper in PATH.
@@ -469,6 +468,13 @@ for extra_mpg in "${extras_array[@]}"; do
   ALL_VIDEOS+=("$extra_mpg")
 done
 
+# Arrays to hold state for HTML preview
+ANALYSIS_TITLES=()
+ANALYSIS_SUBS_STR=()
+ANALYSIS_DEFAULTS=()
+ANALYSIS_HAS_SUBS=()
+
+
 if [ ${#ALL_VIDEOS[@]} -gt 99 ]; then
   echo "ERROR: too many titlesets (${#ALL_VIDEOS[@]}); DVD-Video supports at most 99." >&2
   exit 1
@@ -488,7 +494,20 @@ for idx in "${!ALL_VIDEOS[@]}"; do
   else
     discover_subs "$video" "$ts_idx" "[EXTRA $((ts_idx-1))]"
   fi
+  # Save state for preview
+  ANALYSIS_TITLES+=("$(prettify_filename "$video")")
+  ANALYSIS_HAS_SUBS+=("$CURRENT_HAS_SUBS")
+  ANALYSIS_DEFAULTS+=("$CURRENT_DEFAULT_SUBP")
+  if [ "$CURRENT_HAS_SUBS" -eq 1 ]; then
+    ANALYSIS_SUBS_STR+=("$(IFS='|'; echo "${CURRENT_SUB_LABELS[*]}")")
+  else
+    ANALYSIS_SUBS_STR+=("")
+  fi
 done
+
+# Generate the HTML Preview
+generate_html_preview
+
 echo ""
 echo "============================================================="
 read -r -p "Analysis complete. Proceed with encoding and DVD authoring? [Y/n] " CONFIRM_REPLY
