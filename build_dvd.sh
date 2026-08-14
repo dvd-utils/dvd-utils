@@ -565,7 +565,7 @@ if [ ${#extras_array[@]} -gt 0 ]; then
     mux_subs "$extra_mpg" "$TS_IDX"
     append_titleset_xml "$TS_IDX" "$pretty_name"
 
-    EXTRAS_MENU_LABELS+=("Extra: $pretty_name")
+    EXTRAS_MENU_LABELS+=("$pretty_name") #"Extra: "
     if [ "$CURRENT_HAS_SUBS" -eq 1 ]; then
       EXTRAS_MENU_TARGETS+=("jump titleset $TS_IDX menu;")
     else
