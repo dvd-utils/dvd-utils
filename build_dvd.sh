@@ -452,11 +452,15 @@ CURRENT_SUB_LABELS=()
 CURRENT_HAS_SUBS=0
 CURRENT_MUXED_MPG=""
 CURRENT_DEFAULT_SUBP=62 # 62 = off (DVD convention)
+CURRENT_INPUT_FILES=()
+CURRENT_DATA_FILES=()
 
 # ---------------------------------------------------------------------------
-# HELPER: Discover and Mux Subtitles for a given Title
+# HELPER: Discover subtitles for a given Title
+# This performs only analysis: just filesystem globs & string parsing.
+# No bdsup2sub/spumux/ffmpeg calls happen here yet, so this is safe to run during the pre-flight analysis pass before the user has confirmed anything.
 # ---------------------------------------------------------------------------
-process_video_and_subs() {
+discover_subs() {
   local in_mpg="$1"
   local ts_idx="$2"
   local pretty_name="$(prettify_filename "$in_mpg")"
@@ -465,6 +469,8 @@ process_video_and_subs() {
   CURRENT_HAS_SUBS=0
   CURRENT_MUXED_MPG="$in_mpg"
   CURRENT_DEFAULT_SUBP=62
+  CURRENT_INPUT_FILES=()
+  CURRENT_DATA_FILES=()
 
   local base_path="${in_mpg%.mpg}"
   local base_clean="${base_path%_pal}"
@@ -647,6 +653,8 @@ process_video_and_subs() {
   fi
 
   CURRENT_DEFAULT_SUBP=$((64 + default_index))
+  CURRENT_INPUT_FILES=("${input_files[@]}")
+  CURRENT_DATA_FILES=("${data_files[@]}")
   print_centered_title "$pretty_name"
   echo " | Found ${#input_files[@]} subtitle track(s)"
   echo " | Labels:"
@@ -655,6 +663,24 @@ process_video_and_subs() {
   done
   printf " | Default: stream %d (%s)\n" "$default_index" "${CURRENT_SUB_LABELS[$default_index]}"
   print_footer "$pretty_name"
+}
+# ---------------------------------------------------------------------------
+# HELPER: Mux Subtitles for a given Title
+# This runs bdsup2sub, spumux.
+# Must be called after [discover_subs] for the same (in_mpg, ts_idx), since
+# it relies on CURRENT_HAS_SUBS / CURRENT_INPUT_FILES / CURRENT_DATA_FILES.
+# ---------------------------------------------------------------------------
+mux_subs() {
+  local in_mpg="$1"
+  local ts_idx="$2"
+
+  if [ "$CURRENT_HAS_SUBS" -ne 1 ]; then
+    CURRENT_MUXED_MPG="$in_mpg"
+    return 0
+  fi
+
+  local input_files=("${CURRENT_INPUT_FILES[@]}")
+  local data_files=("${CURRENT_DATA_FILES[@]}")
 
   local current_vid="$in_mpg"
   for i in "${!input_files[@]}"; do
@@ -763,7 +789,7 @@ append_titleset_xml() {
   local ts_idx="$1"
   local title_pretty="$2"
 
-  # Snapshot the globals set by process_video_and_subs for this titleset,
+  # Snapshot the globals set by [discover_subs]/[mux_subs] for this titleset,
   # since build_menu() below will call other helpers that could otherwise
   # clobber CURRENT_* before we're done using them.
   local has_subs="$CURRENT_HAS_SUBS"
@@ -824,7 +850,68 @@ append_titleset_xml() {
 }
 
 # ===========================================================================
-# ORCHESTRATION PIPELINE
+# ANALYSIS (ffprobe + filesystem scans only; no bdsup2sub, no spumux, no ffmpeg encoding, no dvdauthor)
+# ===========================================================================
+echo "============================================================="
+echo " DVD BUILDER — ANALYSIS"
+echo " Target Format: ${DETECTED_FORMAT^^} (${WIDTH}x${HEIGHT})"
+echo " Output Directory: $OUT_DIR"
+echo "============================================================="
+
+# --- Build the ordered list of videos: main movie first, then extras ---
+ALL_VIDEOS=("$MAIN_MOVIE")
+
+shopt -s nullglob
+if [ -n "${EXTRAS_DIR:-}" ]; then
+  extras_array=( "$EXTRAS_DIR"/*.mpg )
+else
+  extras_array=()
+fi
+shopt -u nullglob
+
+for extra_mpg in "${extras_array[@]}"; do
+  [ -s "$extra_mpg" ] || { echo "ERROR: extra file is empty: $extra_mpg" >&2; exit 1; }
+  verify_matches_main_format "$extra_mpg"
+  ALL_VIDEOS+=("$extra_mpg")
+done
+
+if [ ${#ALL_VIDEOS[@]} -gt 99 ]; then
+  echo "ERROR: too many titlesets (${#ALL_VIDEOS[@]}); DVD-Video supports at most 99." >&2
+  exit 1
+fi
+
+if [ ${#extras_array[@]} -gt 0 ]; then
+  echo " Extras: ${#extras_array[@]} found in $EXTRAS_DIR"
+else
+  echo " Extras: none found"
+fi
+
+# --- Discover subtitles for every video (main + extras) up front ---
+echo ""
+echo "ⓘ Scanning subtitles for all titles..."
+for idx in "${!ALL_VIDEOS[@]}"; do
+  ts_idx=$((idx + 1))
+  video="${ALL_VIDEOS[$idx]}"
+  if [ "$ts_idx" -eq 1 ]; then
+    echo "ⓘ Titleset 1 (Main Movie): $(basename "$video")"
+  else
+    echo "ⓘ Titleset $ts_idx (Extra): $(basename "$video")"
+  fi
+  discover_subs "$video" "$ts_idx"
+done
+
+echo ""
+echo "============================================================="
+read -r -p "Analysis complete. Proceed with encoding and DVD authoring? [Y/n] " CONFIRM_REPLY
+case "${CONFIRM_REPLY,,}" in
+  ""|y|yes) ;;
+  *) echo "Aborted — no encoding was performed." >&2; exit 1 ;;
+esac
+echo "============================================================="
+echo ""
+
+# ===========================================================================
+# HEAVY LIFTING (bdsup2sub, spumux, ffmpeg encoding, dvdauthor)
 # ===========================================================================
 
 echo "Menu graphics will be built at standard DVD resolution ${WIDTH}x${HEIGHT} (${DETECTED_FORMAT^^}, target=${TARGET})"
@@ -836,7 +923,8 @@ echo "============================================================="
 
 # --- Process Titleset 1: Main Movie ---
 echo "ⓘ Processing Main Movie: $MAIN_MOVIE"
-process_video_and_subs "$MAIN_MOVIE" 1
+discover_subs "$MAIN_MOVIE" 1
+mux_subs "$MAIN_MOVIE" 1
 movie_pretty="$(prettify_filename "$MAIN_MOVIE")"
 append_titleset_xml 1 "$movie_pretty"
 
@@ -856,24 +944,14 @@ TS_IDX=2
 EXTRAS_MENU_LABELS=()
 EXTRAS_MENU_TARGETS=()
 
-shopt -s nullglob
-if [ -n "${EXTRAS_DIR:-}" ]; then
-  extras_array=( "$EXTRAS_DIR"/*.mpg )
-else
-  extras_array=()
-fi
-shopt -u nullglob
-
 if [ ${#extras_array[@]} -gt 0 ]; then
   for extra_mpg in "${extras_array[@]}"; do
-    [ -s "$extra_mpg" ] || { echo "ERROR: extra file is empty: $extra_mpg" >&2; exit 1; }
-    verify_matches_main_format "$extra_mpg"
-
     pretty_name="$(prettify_filename "$extra_mpg")"
     echo ""
     echo " Processing Extra $TS_IDX: $pretty_name"
 
-    process_video_and_subs "$extra_mpg" "$TS_IDX"
+    discover_subs "$extra_mpg" "$TS_IDX"
+    mux_subs "$extra_mpg" "$TS_IDX"
     append_titleset_xml "$TS_IDX" "$pretty_name"
 
     EXTRAS_MENU_LABELS+=("Extra: $pretty_name")
@@ -885,8 +963,6 @@ if [ ${#extras_array[@]} -gt 0 ]; then
 
     TS_IDX=$((TS_IDX + 1))
   done
-else
-  echo "No extras found in $EXTRAS_DIR"
 fi
 
 if [ "$TS_IDX" -gt 100 ]; then
