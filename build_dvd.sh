@@ -4,12 +4,9 @@
 # ============================================================================
 #  What it does:
 #   1. Scans MAIN_MOVIE and EXTRAS_DIR for .mpg files.
-#   2. Detects PAL/NTSC + resolution from the main movie's own stream data
-#      (frame rate + frame size) and authors the whole disc to match.
-#   3. For every video, looks for matching subtitle .idx/.sub, .sub.idx, or .sup
-#      files, recognizing patterns like _track{n}_{lang}, _track{n}_{lang}_exp, etc.
-#   4. Normalizes language names and selects default subtitles based on config
-#      (e.g., Dutch) falling back to 'track0' if no config match is found.
+#   2. Detects PAL/NTSC + resolution from the main movie's own stream data (frame rate + frame size) and authors the whole disc to match.
+#   3. For every video, looks for matching subtitle .idx/.sub, .sub.idx, or .sup files, recognizing patterns like _track{n}_{lang}, _track{n}_{lang}_exp, etc.
+#   4. Normalizes language names and selects default subtitles based on config (e.g., Dutch) falling back to 'track0' if no config match is found.
 #   5. Dynamic VMGM menu & per-titleset subtitle menus.
 #   6. Builds dvdauthor.xml structure and compiles the final DVD.
 # ============================================================================
@@ -226,14 +223,12 @@ detect_dvd_format() {
     FPS="30000/1001"
   fi
   echo ""
-  echo "+-- Format Detection: $(basename "$file")"
-  echo "|  Codec: $vcodec"
-  echo "|  Resolution: ${w}x${h}"
-  echo "|  Frame Rate: $rate_raw"
-  echo "+-- Standard: ${fmt^^} ($TARGET)"
+  echo " Video: $(basename "$file") (${fmt^^})"
+  echo "  $vcodec $TARGET @ ${w}x${h} ($rate_raw fps)"
 }
 detect_dvd_format "$MAIN_MOVIE"
-echo "Detected format: ${DETECTED_FORMAT^^} (${WIDTH}x${HEIGHT} @ ${FPS}fps)"
+echo ""
+echo "Assuming format: ${DETECTED_FORMAT^^} (${WIDTH}x${HEIGHT} @ ${FPS}fps)"
 #echo "Using subtitle processor: $BDSUP2SUB_CMD"
 
 verify_matches_main_format() {
@@ -367,12 +362,12 @@ build_menu() {
   if [ $(( top_margin + num_items * line_h )) -gt "$menu_h" ]; then
     echo "WARNING: menu '$title_text' has $num_items items and may overflow frame." >&2
   fi
-  echo "+-- Building Menu: $title_text"
-  echo "|  Target: ${menu_w}x${menu_h} (${DETECTED_FORMAT^^})"
-  echo "|  Layout: $num_items items @ ${point_size}pt"
-  echo "|  Buttons:"
+  echo "  -> Building Menu: $title_text"
+  echo "     Target: ${menu_w}x${menu_h} (${DETECTED_FORMAT^^})"
+  echo "     Layout: $num_items items @ ${point_size}pt"
+  echo "     Buttons:"
   for i in "${!labels[@]}"; do
-    printf "|    %d - %s\n" "$i" "${labels[$i]}"
+    printf "       %d - %s\n" "$i" "${labels[$i]}"
   done
   echo "+-- Muxing menu stream..."
   run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg0.log" \
@@ -463,6 +458,7 @@ CURRENT_DATA_FILES=()
 discover_subs() {
   local in_mpg="$1"
   local ts_idx="$2"
+  local tag="${3:-[TS$ts_idx]}"
   local pretty_name="$(prettify_filename "$in_mpg")"
 
   CURRENT_SUB_LABELS=()
@@ -476,7 +472,33 @@ discover_subs() {
   local base_clean="${base_path%_pal}"
   base_clean="${base_clean%_PAL}"
 
+  # Create spaceless variants to handle subtitles that omit spaces from the movie name
+  local base_path_no_space="${base_path// /}"
+  local base_clean_no_space="${base_clean// /}"
+
   shopt -s nullglob
+  # TODO why not just gobble up all sub/idx files? `local all_sub_files=( *.idx *.sub )`
+  #      Normalize the video's base name once, then loop through all_sub_files, normalize each one, and check if it starts with the normalized video name:
+  # normalize_str() {
+  #   local s="$1"
+  #   s="${s%_pal}"          # remove format suffix
+  #   s="${s%_PAL}"
+  #   s="${s%.sub.idx}"      # remove extensions
+  #   s="${s%.idx}"
+  #   s="${s%.sup}"
+  #   s="${s,,}"             # lowercase
+  #   s="${s//[^a-z0-9]/}"   # strip all non-alphanumerics (spaces, underscores, dashes)
+  #   echo "$s"
+  # }
+  # local norm_video="$(normalize_str "$(basename "$in_mpg" .mpg)")"
+  # local raw_sub_files=()
+  # for f in "${all_sub_files[@]}"; do
+  #   local norm_sub="$(normalize_str "$(basename "$f")")"
+  #   if [[ "$norm_sub" == "$norm_video"* ]]; then
+  #     raw_sub_files+=("$f")
+  #   fi
+  # done
+  # This completely eliminates the need for separate spaceless globs, handles _pal vs _PAL automatically, and makes the suffix extraction much easier because you can just compare the normalized strings to find exactly where the video name ends and the language suffix begins. Just an idea.
   local raw_sub_files=(
     "${base_path}"_*.idx
     "${base_path}"_*.sub.idx
@@ -489,11 +511,27 @@ discover_subs() {
       "${base_clean}"_*.sup
     )
   fi
+
+  # Add spaceless variants if they differ from the originals
+  if [ "$base_path" != "$base_path_no_space" ]; then
+    raw_sub_files+=(
+      "${base_path_no_space}"_*.idx
+      "${base_path_no_space}"_*.sub.idx
+      "${base_path_no_space}"_*.sup
+    )
+  fi
+  if [ "$base_clean" != "$base_clean_no_space" ]; then
+    raw_sub_files+=(
+      "${base_clean_no_space}"_*.idx
+      "${base_clean_no_space}"_*.sub.idx
+      "${base_clean_no_space}"_*.sup
+    )
+  fi
   shopt -u nullglob
   if [ ${#raw_sub_files[@]} -eq 0 ]; then
-    print_centered_title "$pretty_name"
-    echo " | No subtitles found for $(basename "$in_mpg")"
-    print_footer "$pretty_name"
+    echo ""
+    echo "${tag} ${pretty_name}"
+    echo "  (No subtitles found)"
     return 0
   fi
   # Deduplicate discovered files
@@ -564,6 +602,8 @@ discover_subs() {
 
   local video_stem="$(basename "$base_path")"
   local video_stem_clean="$(basename "$base_clean")"
+  local video_stem_no_space="${video_stem// /}"
+  local video_stem_clean_no_space="${video_stem_clean// /}"
 
   for i in "${!input_files[@]}"; do
     local f="${input_files[$i]}"
@@ -582,13 +622,21 @@ discover_subs() {
 
     # Extract suffix after video prefix
     local suffix="$stem"
+    local stem_no_space="${stem// /}"
+
     if [[ "$suffix" == "${video_stem}_"* ]]; then
       suffix="${suffix#"${video_stem}_"}"
     elif [[ "$suffix" == "${video_stem_clean}_"* ]]; then
       suffix="${suffix#"${video_stem_clean}_"}"
+    elif [[ "$stem_no_space" == "${video_stem_no_space}_"* ]]; then
+      suffix="${stem_no_space#"${video_stem_no_space}_"}"
+    elif [[ "$stem_no_space" == "${video_stem_clean_no_space}_"* ]]; then
+      suffix="${stem_no_space#"${video_stem_clean_no_space}_"}"
     else
       suffix="${suffix#"${video_stem}"}"
       suffix="${suffix#"${video_stem_clean}"}"
+      suffix="${suffix#"${video_stem_no_space}"}"
+      suffix="${suffix#"${video_stem_clean_no_space}"}"
       suffix="${suffix#_}"
     fi
 
@@ -655,15 +703,20 @@ discover_subs() {
   CURRENT_DEFAULT_SUBP=$((64 + default_index))
   CURRENT_INPUT_FILES=("${input_files[@]}")
   CURRENT_DATA_FILES=("${data_files[@]}")
-  print_centered_title "$pretty_name"
-  echo " | Found ${#input_files[@]} subtitle track(s)"
-  echo " | Labels:"
-  for i in "${!CURRENT_SUB_LABELS[@]}"; do
-    printf " |   (%d) %s\n" "$i" "${CURRENT_SUB_LABELS[$i]}"
-  done
-  printf " | Default: stream %d (%s)\n" "$default_index" "${CURRENT_SUB_LABELS[$default_index]}"
-  print_footer "$pretty_name"
+  echo ""
+  echo "${tag} ${pretty_name}"
+
+  if [ "$CURRENT_HAS_SUBS" -eq 1 ]; then
+    echo "  Found ${#CURRENT_SUB_LABELS[@]} subtitle track(s):"
+    for i in "${!CURRENT_SUB_LABELS[@]}"; do
+      printf "    %d. %s\n" "$((i+1))" "${CURRENT_SUB_LABELS[$i]}"
+    done
+    printf "  Default: %s\n" "${CURRENT_SUB_LABELS[$default_index]}"
+  else
+    echo "  No subtitles found."
+  fi
 }
+
 # ---------------------------------------------------------------------------
 # HELPER: Mux Subtitles for a given Title
 # This runs bdsup2sub, spumux.
@@ -692,7 +745,8 @@ mux_subs() {
     local label="${CURRENT_SUB_LABELS[$i]}"
     # Stage files into clean paths for bdsup2sub.
     # Preserve exact companion basename matching so the internal .idx reference resolves properly.
-    echo " | Processing track $i: $label ($(basename "$f"))"
+
+    echo "  -> Muxing Subtitle $((i+1))/${#input_files[@]}: $label"
     if [[ "$f" == *.sup ]]; then
       cp "$f" "${stage_base}.sup"
       bdsup_in="${stage_base}.sup"
@@ -710,7 +764,7 @@ mux_subs() {
 
     # Conditionally execute depending on whether we resolved the Qt C++ fork or the Java version
     # Utilizing array expansion for BDSUP2SUB_CMD to safely preserve path/arguments
-    echo " |    Converting to images..."
+    echo "     Converting to images..."
     if [[ "${BDSUP2SUB_CMD[*]}" == *"bdsup2sub++"* ]]; then
       run_logged "$LOG_DIR/ts${ts_idx}_bdsup2sub_${i}.log" env QT_QPA_PLATFORM=offscreen "${BDSUP2SUB_CMD[@]}" --no-verbose -o "${pfx}_bdn.xml" "$bdsup_in"
     else
@@ -770,7 +824,7 @@ mux_subs() {
       }
       END { print "  </stream>\n</subpictures>" }
     ' "${pfx}_bdn.xml" > "${pfx}.xml"
-    echo " |    Muxing stream $i into video..."
+    echo "     [$i] Muxing into video..."
     local next_vid="$WORK_DIR/ts${ts_idx}_mux_${i}.mpg"
     # Mux directly using the generated DVDAuthor-formatted XML
     run_logged "$LOG_DIR/ts${ts_idx}_spumux_${i}.log" \
@@ -852,6 +906,8 @@ append_titleset_xml() {
 # ===========================================================================
 # ANALYSIS (ffprobe + filesystem scans only; no bdsup2sub, no spumux, no ffmpeg encoding, no dvdauthor)
 # ===========================================================================
+
+echo ""
 echo "============================================================="
 echo " DVD BUILDER — ANALYSIS"
 echo " Target Format: ${DETECTED_FORMAT^^} (${WIDTH}x${HEIGHT})"
@@ -869,6 +925,14 @@ else
 fi
 shopt -u nullglob
 
+echo ""
+echo "============"
+if [ ${#extras_array[@]} -gt 0 ]; then
+  echo "== Extras == (${#extras_array[@]} found in $EXTRAS_DIR)"
+else
+  echo "== Extras ==  (none found)"
+fi
+echo "============"
 for extra_mpg in "${extras_array[@]}"; do
   [ -s "$extra_mpg" ] || { echo "ERROR: extra file is empty: $extra_mpg" >&2; exit 1; }
   verify_matches_main_format "$extra_mpg"
@@ -880,26 +944,21 @@ if [ ${#ALL_VIDEOS[@]} -gt 99 ]; then
   exit 1
 fi
 
-if [ ${#extras_array[@]} -gt 0 ]; then
-  echo " Extras: ${#extras_array[@]} found in $EXTRAS_DIR"
-else
-  echo " Extras: none found"
-fi
-
 # --- Discover subtitles for every video (main + extras) up front ---
 echo ""
-echo "ⓘ Scanning subtitles for all titles..."
+echo "------------------------------------"
+echo "Scanning subtitles for all titles..."
+echo "------------------------------------"
+
 for idx in "${!ALL_VIDEOS[@]}"; do
   ts_idx=$((idx + 1))
   video="${ALL_VIDEOS[$idx]}"
   if [ "$ts_idx" -eq 1 ]; then
-    echo "ⓘ Titleset 1 (Main Movie): $(basename "$video")"
+    discover_subs "$video" "$ts_idx" "[MAIN]"
   else
-    echo "ⓘ Titleset $ts_idx (Extra): $(basename "$video")"
+    discover_subs "$video" "$ts_idx" "[EXTRA $((ts_idx-1))]"
   fi
-  discover_subs "$video" "$ts_idx"
 done
-
 echo ""
 echo "============================================================="
 read -r -p "Analysis complete. Proceed with encoding and DVD authoring? [Y/n] " CONFIRM_REPLY
@@ -914,19 +973,22 @@ echo ""
 # HEAVY LIFTING (bdsup2sub, spumux, ffmpeg encoding, dvdauthor)
 # ===========================================================================
 
+echo ""
 echo "Menu graphics will be built at standard DVD resolution ${WIDTH}x${HEIGHT} (${DETECTED_FORMAT^^}, target=${TARGET})"
+echo ""
 echo "============================================================="
-echo " DVD BUILDER INITIATED"
+echo " DVD BUILDER — ENCODING & AUTHORING"
 echo " Target Format: ${DETECTED_FORMAT^^} (${WIDTH}x${HEIGHT})"
-echo " Output Directory: $OUT_DIR"
 echo "============================================================="
+echo ""
 
 # --- Process Titleset 1: Main Movie ---
-echo "ⓘ Processing Main Movie: $MAIN_MOVIE"
-discover_subs "$MAIN_MOVIE" 1
+echo "[MAIN] Processing: $(prettify_filename "$MAIN_MOVIE")"
+discover_subs "$MAIN_MOVIE" 1 "[MAIN]"
 mux_subs "$MAIN_MOVIE" 1
 movie_pretty="$(prettify_filename "$MAIN_MOVIE")"
 append_titleset_xml 1 "$movie_pretty"
+
 
 VMGM_LABELS+=("Play Main Movie")
 if [ "$CURRENT_HAS_SUBS" -eq 1 ]; then
@@ -948,9 +1010,9 @@ if [ ${#extras_array[@]} -gt 0 ]; then
   for extra_mpg in "${extras_array[@]}"; do
     pretty_name="$(prettify_filename "$extra_mpg")"
     echo ""
-    echo " Processing Extra $TS_IDX: $pretty_name"
+    echo "[EXTRA $((TS_IDX-1))] Processing: $pretty_name"
 
-    discover_subs "$extra_mpg" "$TS_IDX"
+    discover_subs "$extra_mpg" "$TS_IDX" "[EXTRA $((TS_IDX-1))]"
     mux_subs "$extra_mpg" "$TS_IDX"
     append_titleset_xml "$TS_IDX" "$pretty_name"
 
