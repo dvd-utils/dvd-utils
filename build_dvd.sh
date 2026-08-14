@@ -397,15 +397,18 @@ append_titleset_xml() {
     local btn_idx=0
     for i in "${!sub_labels[@]}"; do
       local val=$((64 + i))
-      XML_TITLESETS+="        <button name=\"b$btn_idx\"> { subtitle = $val; if (g1 eq 1) resume; else jump title 1 chapter 1; } </button>\n"
+      # Explicitly specify the titleset index for the jump
+      XML_TITLESETS+="        <button name=\"b$btn_idx\"> { subtitle = $val; if (g1 eq 1) resume; else jump titleset $ts_idx title 1; } </button>\n"
       btn_idx=$((btn_idx+1))
     done
 
-    XML_TITLESETS+="        <button name=\"b$btn_idx\"> { subtitle = 62; if (g1 eq 1) resume; else jump title 1 chapter 1; } </button>\n"
+    #  Explicitly specify the titleset index for the jump
+    XML_TITLESETS+="        <button name=\"b$btn_idx\"> { subtitle = 62; if (g1 eq 1) resume; else jump titleset $ts_idx title 1; } </button>\n"
     btn_idx=$((btn_idx+1))
     XML_TITLESETS+="        <button name=\"b$btn_idx\"> { g1 = 0; jump vmgm menu entry title; } </button>\n"
 
-    XML_TITLESETS+="        <post> { if (g1 eq 1) resume; else jump title 1 chapter 1; } </post>\n"
+    # Explicitly specify the titleset index for the jump
+    XML_TITLESETS+="        <post> { if (g1 eq 1) resume; else jump titleset $ts_idx title 1; } </post>\n"
     XML_TITLESETS+="      </pgc>\n    </menus>\n"
   fi
 
@@ -419,9 +422,7 @@ append_titleset_xml() {
   # dvdauthor throws "Unknown entry 'title'" if entry attribute is set inside <titles>. Removed `entry="title"`.
   XML_TITLESETS+="      <pgc>\n"
   if [ "$has_subs" -eq 1 ]; then
-    # Each titleset gets its own default subtitle stream applied on entry,
-    # rather than silently inheriting whatever the VMGM fpc set for the
-    # main movie (or whatever the viewer last left the register at).
+    # Each titleset gets its own default subtitle stream applied on entry, rather than silently inheriting whatever the VMGM fpc set for the main movie (or whatever the viewer last left the register at).
     XML_TITLESETS+="        <pre> { g1 = 1; subtitle = ${default_subp}; } </pre>\n"
   else
     XML_TITLESETS+="        <pre> { g1 = 1; } </pre>\n"
@@ -541,13 +542,14 @@ append_titleset_xml 1 "$movie_name_pretty"
 
 VMGM_LABELS+=("Play movie")
 if [ "$CURRENT_HAS_SUBS" -eq 1 ]; then
-  VMGM_TARGETS+=("jump titleset 1 menu;")
+  # Set g1=0 so we don't resume an old title. If g1 was left at 1 from some earlier call, jumping into an extra's subtitle menu would misread that stale value and resume back into whatever was last call'd (the main movie) instead of jumping fresh into the extra.
+  VMGM_TARGETS+=("g1 = 0; jump titleset 1 menu;")
   MAIN_DEFAULT_SUBP=$CURRENT_DEFAULT_SUBP
-  FPC_JUMP="jump titleset 1 menu entry root;"
+  FPC_JUMP="g1 = 0; jump titleset 1 menu entry root;"
 else
-  VMGM_TARGETS+=("jump titleset 1 title 1;")
+  VMGM_TARGETS+=("g1 = 0; jump titleset 1 title 1;")
   MAIN_DEFAULT_SUBP=62
-  FPC_JUMP="jump titleset 1 title 1;"
+  FPC_JUMP="g1 = 0; jump titleset 1 title 1;"
 fi
 
 # --- Process Titleset 2..N: Extras ---
@@ -567,9 +569,10 @@ if [ ${#extras_array[@]} -gt 0 ]; then
 
     EXTRAS_MENU_LABELS+=("$pretty_name") #"Extra: "
     if [ "$CURRENT_HAS_SUBS" -eq 1 ]; then
-      EXTRAS_MENU_TARGETS+=("jump titleset $TS_IDX menu;")
+      # Set g1=0 so we don't resume the main movie
+      EXTRAS_MENU_TARGETS+=("g1 = 0; jump titleset $TS_IDX menu;")
     else
-      EXTRAS_MENU_TARGETS+=("jump titleset $TS_IDX title 1;")
+      EXTRAS_MENU_TARGETS+=("g1 = 0; jump titleset $TS_IDX title 1;")
     fi
 
     TS_IDX=$((TS_IDX + 1))
@@ -584,7 +587,8 @@ fi
 # Add Extras button to Main Menu if extras exist
 if [ ${#EXTRAS_MENU_LABELS[@]} -gt 0 ]; then
   VMGM_LABELS+=("Extras Menu")
-  VMGM_TARGETS+=("jump vmgm menu 2;")
+  # Set g1=0 (extras)
+  VMGM_TARGETS+=("g1 = 0; jump vmgm menu 2;")
 fi
 
 echo " Generating VMGM Root Menu..."
@@ -597,7 +601,8 @@ if [ ${#EXTRAS_MENU_LABELS[@]} -gt 0 ]; then
   echo " Generating VMGM Extras Menu..."
   VMGM_EXTRAS_MPG="$WORK_DIR/vmgm_extras_menu.mpg"
   EXTRAS_MENU_LABELS+=("Main Menu")
-  EXTRAS_MENU_TARGETS+=("jump vmgm menu entry title;")
+  # Set g1=0 (extras)
+  EXTRAS_MENU_TARGETS+=("g1 = 0; jump vmgm menu entry title;")
   build_menu "$VMGM_EXTRAS_MPG" "Extras Menu" "${EXTRAS_MENU_LABELS[@]}"
 fi
 XML_FILE="$WORK_DIR/dvdauthor.xml"
