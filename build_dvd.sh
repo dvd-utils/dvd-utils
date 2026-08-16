@@ -334,7 +334,8 @@ build_menu() {
             "${pfx}_merged.mpg"
   {
     echo '<subpictures><stream>'
-    echo "  <spu start=\"0\" force=\"yes\" highlight=\"${pfx}_hl.png\" select=\"${pfx}_hl.png\">"
+    # Add end="9999" so buttons don't disappear when the menu video loops
+    echo "  <spu start=\"0\" end=\"9999\" force=\"yes\" highlight=\"${pfx}_hl.png\" select=\"${pfx}_hl.png\">"
     for i in "${!labels[@]}"; do
       local up=$(( (i - 1 + num_items) % num_items ))
       local down=$(( (i + 1) % num_items ))
@@ -363,7 +364,6 @@ CURRENT_MUXED_MPG=""
 CURRENT_DEFAULT_SUBP=62 # 62 = off (DVD convention)
 CURRENT_INPUT_FILES=()
 CURRENT_DATA_FILES=()
-
 
 # ---------------------------------------------------------------------------
 # HELPER: Generate XML chunk for a single Titleset
@@ -397,15 +397,15 @@ append_titleset_xml() {
     local btn_idx=0
     for i in "${!sub_labels[@]}"; do
       local val=$((64 + i))
-      # Explicitly specify the titleset index for the jump
-      XML_TITLESETS+="        <button name=\"b$btn_idx\"> { subtitle = $val; if (g1 eq 1) resume; else jump titleset $ts_idx title 1; } </button>\n"
+      # Set g2 = 1 so the title knows we explicitly chose this subtitle
+      XML_TITLESETS+="        <button name=\"b$btn_idx\"> { subtitle = $val; g2 = 1; if (g1 eq 1) resume; else jump titleset $ts_idx title 1; } </button>\n"
       btn_idx=$((btn_idx+1))
     done
 
-    #  Explicitly specify the titleset index for the jump
-    XML_TITLESETS+="        <button name=\"b$btn_idx\"> { subtitle = 62; if (g1 eq 1) resume; else jump titleset $ts_idx title 1; } </button>\n"
+    # Set g2 = 1 for "No subtitles" as well
+    XML_TITLESETS+="        <button name=\"b$btn_idx\"> { subtitle = 62; g2 = 1; if (g1 eq 1) resume; else jump titleset $ts_idx title 1; } </button>\n"
     btn_idx=$((btn_idx+1))
-    XML_TITLESETS+="        <button name=\"b$btn_idx\"> { g1 = 0; jump vmgm menu entry title; } </button>\n"
+    XML_TITLESETS+="        <button name=\"b$btn_idx\"> { g1 = 0; g2 = 0; jump vmgm menu entry title; } </button>\n"
 
     # Explicitly specify the titleset index for the jump
     XML_TITLESETS+="        <post> { if (g1 eq 1) resume; else jump titleset $ts_idx title 1; } </post>\n"
@@ -422,10 +422,10 @@ append_titleset_xml() {
   # dvdauthor throws "Unknown entry 'title'" if entry attribute is set inside <titles>. Removed `entry="title"`.
   XML_TITLESETS+="      <pgc>\n"
   if [ "$has_subs" -eq 1 ]; then
-    # Each titleset gets its own default subtitle stream applied on entry, rather than silently inheriting whatever the VMGM fpc set for the main movie (or whatever the viewer last left the register at).
-    XML_TITLESETS+="        <pre> { g1 = 1; subtitle = ${default_subp}; } </pre>\n"
+    # Only apply default subtitle if g2 eq 0 (meaning we didn't come from the subtitle menu)
+    XML_TITLESETS+="        <pre> { if (g2 eq 0) { subtitle = ${default_subp}; } g1 = 1; g2 = 0; } </pre>\n"
   else
-    XML_TITLESETS+="        <pre> { g1 = 1; } </pre>\n"
+    XML_TITLESETS+="        <pre> { g1 = 1; g2 = 0; } </pre>\n"
   fi
   XML_TITLESETS+="        <vob file=\"$muxed_mpg\" chapters=\"0\" />\n"
   XML_TITLESETS+="        <post> { g1 = 0; call vmgm menu; } </post>\n"
@@ -539,17 +539,17 @@ mux_subs "$MAIN_MOVIE" 1
 movie_name_pretty="$(prettify_filename "$MAIN_MOVIE")"
 append_titleset_xml 1 "$movie_name_pretty"
 
-
 VMGM_LABELS+=("Play movie")
 if [ "$CURRENT_HAS_SUBS" -eq 1 ]; then
-  # Set g1=0 so we don't resume an old title. If g1 was left at 1 from some earlier call, jumping into an extra's subtitle menu would misread that stale value and resume back into whatever was last call'd (the main movie) instead of jumping fresh into the extra.
-  VMGM_TARGETS+=("g1 = 0; jump titleset 1 menu;")
+  # Set g2=0 so the default subtitle is applied. If g1 was left at 1 from some earlier call, jumping into an extra's subtitle menu would misread that stale value and resume back into whatever was last call'd (the main movie) instead of jumping fresh into the extra.
+  VMGM_TARGETS+=("g1 = 0; g2 = 0; jump titleset 1 menu;")
   MAIN_DEFAULT_SUBP=$CURRENT_DEFAULT_SUBP
-  FPC_JUMP="g1 = 0; jump titleset 1 menu entry root;"
+  # Send the viewer to the VMGM Main Menu on disc insertion, not the subtitle menu
+  FPC_JUMP="g1 = 0; g2 = 0; jump vmgm menu entry title;"
 else
-  VMGM_TARGETS+=("g1 = 0; jump titleset 1 title 1;")
+  VMGM_TARGETS+=("g1 = 0; g2 = 0; jump titleset 1 title 1;")
   MAIN_DEFAULT_SUBP=62
-  FPC_JUMP="g1 = 0; jump titleset 1 title 1;"
+  FPC_JUMP="g1 = 0; g2 = 0; jump vmgm menu entry title;"
 fi
 
 # --- Process Titleset 2..N: Extras ---
@@ -569,10 +569,10 @@ if [ ${#extras_array[@]} -gt 0 ]; then
 
     EXTRAS_MENU_LABELS+=("$pretty_name") #"Extra: "
     if [ "$CURRENT_HAS_SUBS" -eq 1 ]; then
-      # Set g1=0 so we don't resume the main movie
-      EXTRAS_MENU_TARGETS+=("g1 = 0; jump titleset $TS_IDX menu;")
+      # Set g2=0 so the default subtitle is applied
+      EXTRAS_MENU_TARGETS+=("g1 = 0; g2 = 0; jump titleset $TS_IDX menu;")
     else
-      EXTRAS_MENU_TARGETS+=("g1 = 0; jump titleset $TS_IDX title 1;")
+      EXTRAS_MENU_TARGETS+=("g1 = 0; g2 = 0; jump titleset $TS_IDX title 1;")
     fi
 
     TS_IDX=$((TS_IDX + 1))
@@ -587,8 +587,7 @@ fi
 # Add Extras button to Main Menu if extras exist
 if [ ${#EXTRAS_MENU_LABELS[@]} -gt 0 ]; then
   VMGM_LABELS+=("Extras Menu")
-  # Set g1=0 (extras)
-  VMGM_TARGETS+=("g1 = 0; jump vmgm menu 2;")
+  VMGM_TARGETS+=("g1 = 0; g2 = 0; jump vmgm menu 2;")
 fi
 
 echo " Generating VMGM Root Menu..."
@@ -601,16 +600,17 @@ if [ ${#EXTRAS_MENU_LABELS[@]} -gt 0 ]; then
   echo " Generating VMGM Extras Menu..."
   VMGM_EXTRAS_MPG="$WORK_DIR/vmgm_extras_menu.mpg"
   EXTRAS_MENU_LABELS+=("Main Menu")
-  # Set g1=0 (extras)
-  EXTRAS_MENU_TARGETS+=("g1 = 0; jump vmgm menu entry title;")
+  EXTRAS_MENU_TARGETS+=("g1 = 0; g2 = 0; jump vmgm menu entry title;")
   build_menu "$VMGM_EXTRAS_MPG" "Extras Menu" "${EXTRAS_MENU_LABELS[@]}"
 fi
+
 XML_FILE="$WORK_DIR/dvdauthor.xml"
 printf '<?xml version="1.0"?>\n' > "$XML_FILE"
 printf '<dvdauthor dest="%s" jumppad="yes">\n\n' "$OUT_DIR" >> "$XML_FILE"
 
 printf '  <vmgm>\n' >> "$XML_FILE"
-printf '    <fpc>\n      { g1 = 0; subtitle = %d; %s }\n    </fpc>\n' "$MAIN_DEFAULT_SUBP" "$FPC_JUMP" >> "$XML_FILE"
+# Set g2=0 in FPC as well
+printf '    <fpc>\n      { g1 = 0; g2 = 0; subtitle = %d; %s }\n    </fpc>\n' "$MAIN_DEFAULT_SUBP" "$FPC_JUMP" >> "$XML_FILE"
 printf '    <menus>\n      <video format="%s" resolution="%sx%s" />\n' "$DETECTED_FORMAT" "$WIDTH" "$HEIGHT" >> "$XML_FILE"
 
 # PGC 1: Main Menu
