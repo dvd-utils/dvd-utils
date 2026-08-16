@@ -7,8 +7,8 @@
 # ---------------------------------------------------------------------------
 PREVIEW_CACHE_DIR="${PREVIEW_CACHE_DIR:-preview_cache}"
 PREVIEW_CLIP_SECONDS="${PREVIEW_CLIP_SECONDS:-5}"     # length of looping bg clip
-PREVIEW_CLIP_START="${PREVIEW_CLIP_START:-120}"        # seek-in point (skip logos/black)
-PREVIEW_CLIP_WIDTH="${PREVIEW_CLIP_WIDTH:-480}"        # keep it small, it's just a preview
+PREVIEW_CLIP_START="${PREVIEW_CLIP_START:-120}"       # seek-in point (skip logos/black)
+PREVIEW_CLIP_WIDTH="${PREVIEW_CLIP_WIDTH:-480}"       # keep it small, it's just a preview
 
 # ---------------------------------------------------------------------------
 # HELPER: Generate (and cache) a small muted H.264 proxy clip + poster frame for one source .mpg. Browsers can't play raw MPEG-2 .mpg, so this is a throwaway preview asset only. It has no bearing on the real DVD encode.
@@ -64,160 +64,211 @@ generate_preview_clip() {
 generate_html_preview() {
   local html_file="dvd_preview.html"
 
-  {
-    echo '<!DOCTYPE html><html><head><meta charset="UTF-8">'
-    echo '<style>'
-    echo '  * { box-sizing: border-box; }'
-    echo '  body { background: #121212; color: #d4d4d4; font-family: Arial, sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; }'
-    echo '  h1 { color: #fff; margin-bottom: 5px; }'
-    echo '  .meta { color: #888; margin-bottom: 20px; font-size: 0.9em; }'
-    echo '  .dvd-frame { width: 100%; max-width: 800px; aspect-ratio: 4/3; background: #000; border: 2px solid #333; position: relative; overflow: hidden; box-shadow: 0 0 20px rgba(0,0,0,0.5); }'
-    echo '  .screen { position: absolute; inset: 0; display: none; flex-direction: column; }'
-    echo '  .screen.active { display: flex; }'
-    echo '  .screen-content { position: relative; z-index: 2; flex: 1; display: flex; flex-direction: column; padding: 40px; }'
-  # echo '  .bg-media { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 0; filter: brightness(0.35) saturate(0.9); }'
-    echo '  .bg-media { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 0; }'
-    echo '  .bg-scrim { position: absolute; inset: 0; z-index: 1; background: linear-gradient(180deg, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.15) 100%); }'
-    echo '  .title { color: #fff; font-size: 24px; margin-bottom: 30px; font-weight: bold; text-shadow: 0 2px 6px rgba(0,0,0,0.8); }'
-    echo '  .btn { background: none; border: none; color: #ccc; font-size: 18px; text-align: left; cursor: pointer; padding: 8px 0; display: block; width: 100%; transition: all 0.1s; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }'
-    echo '  .btn:hover, .btn:focus { color: #ff0000; outline: none; transform: translateX(10px); }'
-    echo '  .btn::before { content: "▶ "; opacity: 0; color: #ff0000; }'
-    echo '  .btn:hover::before { opacity: 1; }'
-    echo '  .movie-placeholder { display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; text-align: center; }'
-    echo '  .movie-placeholder h2 { color: #fff; text-shadow: 0 2px 6px rgba(0,0,0,0.8); }'
-    echo '  .movie-placeholder .btn { max-width: 220px; text-align: center; margin-top: 8px; }'
-    echo '  .now-playing-badge { display: inline-flex; align-items: center; gap: 6px; color: #ff5555; font-size: 12px; letter-spacing: 1px; margin-bottom: 10px; text-transform: uppercase; }'
-    echo '  .now-playing-badge .dot { width: 8px; height: 8px; border-radius: 50%; background: #ff0000; animation: pulse 1.4s infinite; }'
-    echo '  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }'
-    echo '  .remote { margin-top: 15px; display: flex; gap: 10px; }'
-    echo '  .remote button { background: #333; color: #fff; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; }'
-    echo '  .remote button:hover { background: #555; }'
-    echo '  .proxy-note { max-width: 800px; margin-top: 12px; font-size: 0.8em; color: #666; text-align: center; }'
-    echo '</style></head><body>'
+  # Pre-generate proxy clips/posters up front
+  declare -a CLIP_PATH POSTER_PATH
+  for i in "${!ANALYSIS_TITLES[@]}"; do
+    ts_idx=$((i + 1))
+    info=$(generate_preview_clip "${ALL_VIDEOS[$i]}" "$ts_idx")
+    CLIP_PATH[$i]="${info%%|*}"
+    POSTER_PATH[$i]="${info##*|}"
+  done
 
-    echo "<h1>DVD Preview</h1>"
-    echo "<div class='meta'>Format: ${DETECTED_FORMAT^^} ${WIDTH}x${HEIGHT} @ ${FPS}fps</div>"
-    echo "<div class='dvd-frame'>"
+  cat <<EOF > "$html_file"
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  * { box-sizing: border-box; }
+  body { background: #121212; color: #d4d4d4; font-family: Arial, sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+  h1 { color: #fff; margin-bottom: 5px; }
+  .meta { color: #888; margin-bottom: 20px; font-size: 0.9em; }
+  .dvd-frame { width: 100%; max-width: 800px; aspect-ratio: 4/3; background: #000; border: 2px solid #333; position: relative; overflow: hidden; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+  .screen { position: absolute; inset: 0; display: none; flex-direction: column; }
+  .screen.active { display: flex; }
+  .screen-content { position: relative; z-index: 2; flex: 1; display: flex; flex-direction: column; padding: 40px; }
+  .bg-media { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 0; filter: brightness(0.45) saturate(0.8); }
+  .bg-scrim { position: absolute; inset: 0; z-index: 1; background: linear-gradient(180deg, rgba(0,0,0,0.2) 0%, rgba(0,0,0,0.6) 100%); }
+  .title { color: #fff; font-size: 24px; margin-bottom: 30px; font-weight: bold; text-shadow: 0 2px 6px rgba(0,0,0,0.9); }
+  .btn { background: none; border: none; color: #ccc; font-size: 18px; text-align: left; cursor: pointer; padding: 8px 15px; display: block; width: 100%; transition: all 0.1s; text-shadow: 0 1px 3px rgba(0,0,0,0.9); }
+  .btn:hover, .btn.active { color: #ff0000; outline: none; transform: translateX(10px); background: rgba(255,0,0,0.1); }
+  .btn::before { content: "▶ "; opacity: 0; color: #ff0000; }
+  .btn:hover::before, .btn.active::before { opacity: 1; }
+  .movie-placeholder { display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; text-align: center; }
+  .movie-placeholder h2 { color: #fff; text-shadow: 0 2px 6px rgba(0,0,0,0.9); }
+  .movie-placeholder .btn { max-width: 220px; text-align: center; margin-top: 8px; }
+  .now-playing-badge { display: inline-flex; align-items: center; gap: 6px; color: #ff5555; font-size: 12px; letter-spacing: 1px; margin-bottom: 10px; text-transform: uppercase; }
+  .now-playing-badge .dot { width: 8px; height: 8px; border-radius: 50%; background: #ff0000; animation: pulse 1.4s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .remote { margin-top: 15px; display: flex; gap: 10px; }
+  .remote button { background: #333; color: #fff; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; }
+  .remote button:hover { background: #555; }
+  .proxy-note { max-width: 800px; margin-top: 12px; font-size: 0.8em; color: #666; text-align: center; }
+</style>
+</head>
+<body>
+  <h1>DVD Preview</h1>
+  <div class="meta">Format: ${DETECTED_FORMAT^^} ${WIDTH}x${HEIGHT} @ ${FPS}fps</div>
+  <div class="dvd-frame">
+EOF
 
-    echo '<script>
-      function showScreen(id) {
-        document.querySelectorAll(".screen").forEach(s => {
-          s.classList.remove("active");
-          const v = s.querySelector("video");
-          if (v) v.pause();
-        });
-        const target = document.getElementById(id);
-        target.classList.add("active");
-        const v = target.querySelector("video");
-        if (v) { v.currentTime = 0; v.play().catch(() => {}); }
-      }
-    </script>'
+  # Generate Screens
+  # VMGM Main Menu
+  cat <<EOF >> "$html_file"
+    <div id="vmgm" class="screen active">
+      $([ -n "${POSTER_PATH[0]:-}" ] && echo "<img class='bg-media' src='${POSTER_PATH[0]}' alt=''><div class='bg-scrim'></div>")
+      <div class="screen-content">
+        <div class="title">${ANALYSIS_TITLES[0]}</div>
+        <button class="btn" data-target="ts1_movie">Play movie</button>
+EOF
 
-    # Pre-generate proxy clips/posters for every titleset up front so we can reuse the same poster behind menus as well as the movie screen.
-    declare -a CLIP_PATH POSTER_PATH
+  if [ ${#ANALYSIS_TITLES[@]} -gt 1 ]; then
+    echo '<button class="btn" data-target="vmgm_extras">Extras Menu</button>' >> "$html_file"
+  fi
+
+  cat <<EOF >> "$html_file"
+      </div>
+    </div>
+EOF
+
+  # VMGM Extras Menu
+  if [ ${#ANALYSIS_TITLES[@]} -gt 1 ]; then
+    cat <<EOF >> "$html_file"
+    <div id="vmgm_extras" class="screen">
+      <div class="screen-content">
+        <div class="title">Extras Menu</div>
+EOF
     for i in "${!ANALYSIS_TITLES[@]}"; do
       ts_idx=$((i + 1))
-      info=$(generate_preview_clip "${ALL_VIDEOS[$i]}" "$ts_idx")
-      CLIP_PATH[$i]="${info%%|*}"
-      POSTER_PATH[$i]="${info##*|}"
+      if [ "$ts_idx" -gt 1 ]; then
+        echo "<button class='btn' data-target='ts${ts_idx}_movie'>${ANALYSIS_TITLES[$i]}</button>" >> "$html_file"
+      fi
     done
+    echo "<button class='btn' data-target='vmgm'>Main menu</button>" >> "$html_file"
+    echo "</div></div>" >> "$html_file"
+  fi
 
-    # VMGM Main Menu (use the main movie's poster as backdrop)
-    echo '<div id="vmgm" class="screen active">'
-    if [ -n "${POSTER_PATH[0]:-}" ]; then
-      echo "<img class='bg-media' src='${POSTER_PATH[0]}' alt=''>"
-      echo "<div class='bg-scrim'></div>"
-    fi
-    echo '<div class="screen-content">'
-    echo "<div class=\"title\">${ANALYSIS_TITLES[0]}</div>"
-    echo '<button class="btn" onclick="showScreen('\''ts1_movie'\'')">Play movie</button>'
-    if [ ${#ANALYSIS_TITLES[@]} -gt 1 ]; then
-      echo '<button class="btn" onclick="showScreen('\''vmgm_extras'\'')">Extras Menu</button>'
-    fi
-    echo '</div></div>'
+  # Titleset Screens
+  for i in "${!ANALYSIS_TITLES[@]}"; do
+    local ts_idx=$((i + 1))
+    local title="${ANALYSIS_TITLES[$i]}"
+    local has_subs="${ANALYSIS_HAS_SUBS[$i]}"
+    local subs_str="${ANALYSIS_SUBS_STR[$i]}"
+    local default_idx=$(( ANALYSIS_DEFAULTS[$i] - 64 ))
+    local clip="${CLIP_PATH[$i]:-}"
+    local poster="${POSTER_PATH[$i]:-}"
 
-    # VMGM Extras Menu
-    if [ ${#ANALYSIS_TITLES[@]} -gt 1 ]; then
-      echo '<div id="vmgm_extras" class="screen">'
-      echo '<div class="screen-content">'
-      echo '<div class="title">Extras Menu</div>'
-      for i in "${!ANALYSIS_TITLES[@]}"; do
-        ts_idx=$((i + 1))
-        if [ "$ts_idx" -gt 1 ]; then
-          title="${ANALYSIS_TITLES[$i]}"
-          echo "<button class='btn' onclick=\"showScreen('ts${ts_idx}_movie')\">$title</button>"
+    # Subtitle Menu
+    if [ "$has_subs" -eq 1 ]; then
+      cat <<EOF >> "$html_file"
+      <div id='ts${ts_idx}_menu' class='screen'>
+        $([ -n "$poster" ] && echo "<img class='bg-media' src='$poster' alt=''><div class='bg-scrim'></div>")
+        <div class="screen-content">
+          <div class="title">Subtitles: $title</div>
+EOF
+      IFS='|' read -ra subs <<< "$subs_str"
+      for j in "${!subs[@]}"; do
+        local sub_label="${subs[$j]}"
+        local btn_class="btn"
+        if [ "$j" -eq "$default_idx" ]; then
+          btn_class="btn active"
         fi
+        echo "<button class='$btn_class' data-target='ts${ts_idx}_movie'>$sub_label</button>" >> "$html_file"
       done
-      echo "<button class='btn' onclick=\"showScreen('vmgm')\">Main menu</button>"
-      echo '</div></div>'
+      echo "<button class='btn' data-target='ts${ts_idx}_movie'>No subtitles</button>" >> "$html_file"
+      echo "<button class='btn' data-target='vmgm'>Main Menu</button>" >> "$html_file"
+      echo "</div></div>" >> "$html_file"
     fi
 
-    # Titleset Screens (Subtitle Menus + Movie Play Screens)
-    for i in "${!ANALYSIS_TITLES[@]}"; do
-      local ts_idx=$((i + 1))
-      local title="${ANALYSIS_TITLES[$i]}"
-      local has_subs="${ANALYSIS_HAS_SUBS[$i]}"
-      local subs_str="${ANALYSIS_SUBS_STR[$i]}"
-      local default_idx=$(( ANALYSIS_DEFAULTS[$i] - 64 ))
-      local clip="${CLIP_PATH[$i]:-}"
-      local poster="${POSTER_PATH[$i]:-}"
+    # Movie Playing Screen
+    cat <<EOF >> "$html_file"
+    <div id='ts${ts_idx}_movie' class='screen'>
+      $([ -n "$clip" ] && echo "<video class='bg-media' autoplay muted loop playsinline poster='$poster'><source src='$clip' type='video/mp4'></video>" || ([ -n "$poster" ] && echo "<img class='bg-media' src='$poster' alt=''>"))
+      <div class="bg-scrim"></div>
+      <div class="screen-content">
+        <div class="movie-placeholder">
+          <div class="now-playing-badge"><span class="dot"></span>Now Playing</div>
+          <h2>$title</h2>
+EOF
+    if [ "$has_subs" -eq 1 ]; then
+      echo "<button class='btn' data-target='ts${ts_idx}_menu'>Subtitle Menu</button>" >> "$html_file"
+    fi
+    echo "<button class='btn' data-target='vmgm'>Return to Main Menu</button>" >> "$html_file"
+    echo '</div></div></div>' >> "$html_file"
+  done
 
-      # Subtitle Menu
-      if [ "$has_subs" -eq 1 ]; then
-        echo "<div id='ts${ts_idx}_menu' class='screen'>"
-        if [ -n "$poster" ]; then
-          echo "<img class='bg-media' src='$poster' alt=''>"
-          echo "<div class='bg-scrim'></div>"
-        fi
-        echo '<div class="screen-content">'
-        menu_title="Subtitles: $title"
-        [ "$ts_idx" -eq 1 ] && menu_title="Movie Subtitles"
-        echo "<div class='title'>$menu_title</div>"
+  # Close HTML and add Javascript for Navigation
+  cat <<EOF >> "$html_file"
+  </div>
+  <div class="remote">
+    <button onclick="showScreen('vmgm')">DVD Menu</button>
+    <span style="color:#666; align-self:center; font-size:0.8em;">Tip: Use Arrow Keys & Enter to navigate</span>
+  </div>
 
-        IFS='|' read -ra subs <<< "$subs_str"
-        for j in "${!subs[@]}"; do
-          local sub_label="${subs[$j]}"
-          local btn_style=""
-          if [ "$j" -eq "$default_idx" ]; then
-            btn_style="style='color: #ff0000; font-weight: bold;'"
-          fi
-          echo "<button class='btn' $btn_style onclick=\"showScreen('ts${ts_idx}_movie')\">$sub_label</button>"
-        done
-        echo "<button class='btn' onclick=\"showScreen('ts${ts_idx}_movie')\">No subtitles</button>"
-        echo "<button class='btn' onclick=\"showScreen('vmgm')\">Main Menu</button>"
-        echo '</div></div>'
-      fi
+  <div class="proxy-note">Background video/posters are throwaway H.264 proxies generated by ffmpeg for preview only.<br>They have no effect on the actual DVD-Video encode.</div>
 
-      # Movie Playing Screen
-      echo "<div id='ts${ts_idx}_movie' class='screen'>"
-      if [ -n "$clip" ]; then
-        echo "<video class='bg-media' autoplay muted loop playsinline poster='$poster'><source src='$clip' type='video/mp4'></video>"
-      elif [ -n "$poster" ]; then
-        echo "<img class='bg-media' src='$poster' alt=''>"
-      fi
-      echo "<div class='bg-scrim'></div>"
-      echo '<div class="screen-content">'
-      echo '<div class="movie-placeholder">'
-      echo '<div class="now-playing-badge"><span class="dot"></span>Now Playing</div>'
-      echo "<h2>$title</h2>"
-      if [ "$has_subs" -eq 1 ]; then
-        echo "<button class='btn' onclick=\"showScreen('ts${ts_idx}_menu')\">Subtitle Menu</button>"
-      fi
-      echo "<button class='btn' onclick=\"showScreen('vmgm')\">Return to Main Menu</button>"
-      echo '</div></div></div>'
-    done
+  <script>
+    let currentButtons = [];
+    let selectedIndex = 0;
 
-    echo '</div>' # End dvd-frame
+    function showScreen(id) {
+      document.querySelectorAll(".screen").forEach(s => {
+        s.classList.remove("active");
+        const v = s.querySelector("video");
+        if (v) v.pause();
+      });
 
-    # Fake DVD Remote
-    echo '<div class="remote">'
-    echo '<button onclick="showScreen('\''vmgm'\'')">DVD Menu</button>'
-    echo '</div>'
+      const target = document.getElementById(id);
+      target.classList.add("active");
 
-    echo '<div class="proxy-note">Background video/posters are throwaway H.264 proxies generated by ffmpeg for preview only. <br>They have no effect on the actual DVD-Video encode.</div>'
+      const v = target.querySelector("video");
+      if (v) { v.currentTime = 0; v.play().catch(() => {}); }
 
-    echo '</body></html>'
-  } > "$html_file"
+      // Update button tracking for keyboard navigation
+      currentButtons = Array.from(target.querySelectorAll(".btn"));
+      selectedIndex = currentButtons.findIndex(b => b.classList.contains("active"));
+      if (selectedIndex === -1) selectedIndex = 0;
+      updateButtonStates();
+    }
+
+    function updateButtonStates() {
+      currentButtons.forEach((b, i) => {
+        if (i === selectedIndex) b.classList.add("active");
+        else b.classList.remove("active");
+      });
+    }
+
+    // Handle Keyboard Navigation (Like a real DVD player)
+    document.addEventListener('keydown', (e) => {
+      if (currentButtons.length === 0) return;
+
+      if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        selectedIndex = (selectedIndex + 1) % currentButtons.length;
+        updateButtonStates();
+      } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        selectedIndex = (selectedIndex - 1 + currentButtons.length) % currentButtons.length;
+        updateButtonStates();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const btn = currentButtons[selectedIndex];
+        const target = btn.getAttribute('data-target');
+        if (target) showScreen(target);
+      }
+    });
+
+    // Attach click handlers to data-target buttons
+    document.querySelectorAll('.btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const target = btn.getAttribute('data-target');
+        if (target) showScreen(target);
+      });
+    });
+  </script>
+</body>
+</html>
+EOF
 
   echo "============================================================="
   echo " 🌐 HTML Preview generated at file://$(pwd)/$html_file"

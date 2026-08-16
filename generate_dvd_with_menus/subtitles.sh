@@ -284,8 +284,8 @@ mux_subs() {
 
   local input_files=("${CURRENT_INPUT_FILES[@]}")
   local data_files=("${CURRENT_DATA_FILES[@]}")
-  local current_vid="$in_mpg"
 
+  local current_vid="$in_mpg"
   for i in "${!input_files[@]}"; do
     local f="${input_files[$i]}"
     local data_file="${data_files[$i]}"
@@ -328,9 +328,27 @@ mux_subs() {
       echo "ERROR: bdsup2sub produced no .png frames for $f (subtitle file may be malformed)." >&2
       exit 1
     fi
-    # Quantize PNGs to 4 colors to satisfy spumux's DVD subtitle requirements # TODO is this really necessary?
+    # Determine source resolution to scale subtitles to fit DVD frame
+    local src_w=0 src_h=0
+    local log_file="$LOG_DIR/ts${ts_idx}_bdsup2sub_${i}.log"
+    local res_str=$(grep -i -m 1 -E '(resolution|size):' "$log_file" | grep -o '[0-9]\+x[0-9]\+' || true)
+    if [ -n "$res_str" ]; then
+      src_w="${res_str%x*}"
+      src_h="${res_str#*x}"
+    fi
+
+    local scale_w=1.0 scale_h=1.0
+    if [ "$src_w" -gt 0 ] && [ "$src_h" -gt 0 ]; then
+      scale_w=$(awk "BEGIN {print $WIDTH / $src_w}")
+      scale_h=$(awk "BEGIN {print $HEIGHT / $src_h}")
+    fi
+
+    local w_pct=$(awk "BEGIN {printf \"%.6f\", $scale_w * 100}")
+    local h_pct=$(awk "BEGIN {printf \"%.6f\", $scale_h * 100}")
+
+    # Scale PNGs to fit DVD resolution and quantize PNGs to 4 colors to satisfy spumux's DVD subtitle requirements # TODO is this quantization really necessary?
     for png in "${pngs[@]}"; do
-      convert "$png" -alpha on -colors 4 +dither PNG8:"${png}.tmp" && mv "${png}.tmp" "$png"
+      convert "$png" -alpha on -resize "${w_pct}x${h_pct}!" -colors 4 +dither PNG8:"${png}.tmp" && mv "${png}.tmp" "$png"
     done
 
     # When bdsup2sub++ exports XML subtitles, its root tag is <BDN>:
@@ -339,15 +357,17 @@ mux_subs() {
     #   <subpictures>
     #     <stream>
     #       <spu start="..." end="..." image="...">
-    # Convert BDN XML -> DVDAuthor spumux XML format
+    # Convert BDN XML -> DVDAuthor spumux XML format, applying scale factors to X/Y
     #
     # Pass $WORK_DIR to awk and use case-insensitive regex for bdn.xml tags
     # Extract X and Y coordinates from <Graphic> tag so spumux places the cropped PNG correctly
     # Convert HH:MM:SS:FF to HH:MM:SS.mmm to bypass spumux's frame parsing bug
-    awk -v workdir="$WORK_DIR" -v fps="$FPS" '
+    awk -v workdir="$WORK_DIR" -v fps="$FPS" -v scale_w="$scale_w" -v scale_h="$scale_h" '
       function tc_to_ms(tc,   t, hh, mm, ss, ff, ms) {
-        split(tc, t, ":"); hh = t[1]; mm = t[2]; ss = t[3]; ff = t[4];
-        if (fps == 25) ms = ff * 40; else ms = ff * 33;
+        split(tc, t, ":");
+        hh = t[1]; mm = t[2]; ss = t[3]; ff = t[4];
+        if (fps == 25) ms = ff * 40;
+        else ms = ff * 33;
         return sprintf("%02d:%02d:%02d.%03d", hh, mm, ss, ms);
       }
       BEGIN { print "<subpictures>\n  <stream>" }
@@ -361,9 +381,13 @@ mux_subs() {
         x=0; y=0
         if (match($0, /[Xx]="[0-9]+"/)) { x = substr($0, RSTART+3, RLENGTH-4) }
         if (match($0, /[Yy]="[0-9]+"/)) { y = substr($0, RSTART+3, RLENGTH-4) }
+
         sub(/.*<[Gg]raphic[^>]*>/, "", $0); sub(/<\/[Gg]raphic>.*/, "", $0)
         gsub(/^[ \t\r\n]+|[ \t\r\n]+$/, "", $0)
+
         if (start != "" && end != "" && $0 != "") {
+          x = int(x * scale_w)
+          y = int(y * scale_h)
           print "    <spu start=\"" tc_to_ms(start) "\" end=\"" tc_to_ms(end) "\" image=\"" workdir "/" $0 "\" xoffset=\"" x "\" yoffset=\"" y "\" />"
         }
       }
