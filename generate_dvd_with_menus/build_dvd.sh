@@ -484,7 +484,7 @@ ANALYSIS_TITLES=()
 ANALYSIS_SUBS_STR=()
 ANALYSIS_DEFAULTS=()
 ANALYSIS_HAS_SUBS=()
-
+ANALYSIS_SUB_FILES=()   # pipe-separated subtitle entry files (.idx/.sub.idx/.sup/.srt) per title
 
 if [ ${#ALL_VIDEOS[@]} -gt 99 ]; then
   echo "ERROR: too many titlesets (${#ALL_VIDEOS[@]}); DVD-Video supports at most 99." >&2
@@ -511,8 +511,10 @@ for idx in "${!ALL_VIDEOS[@]}"; do
   ANALYSIS_DEFAULTS+=("$CURRENT_DEFAULT_SUBP")
   if [ "$CURRENT_HAS_SUBS" -eq 1 ]; then
     ANALYSIS_SUBS_STR+=("$(IFS='|'; echo "${CURRENT_SUB_LABELS[*]}")")
+    ANALYSIS_SUB_FILES+=("$(IFS='|'; echo "${CURRENT_INPUT_FILES[*]}")")
   else
     ANALYSIS_SUBS_STR+=("")
+    ANALYSIS_SUB_FILES+=("")
   fi
 done
 
