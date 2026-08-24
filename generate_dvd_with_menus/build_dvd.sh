@@ -236,101 +236,239 @@ build_menu() {
     menu_h=480
   fi
 
-  # Dynamic title font sizing (shrink for long titles like extras)
-  local title_size=42
-  if [ ${#title_text} -gt 30 ]; then title_size=36; fi
-  if [ ${#title_text} -gt 45 ]; then title_size=30; fi
-  if [ ${#title_text} -gt 60 ]; then title_size=26; fi
-  if [ ${#title_text} -gt 80 ]; then title_size=22; fi
-  [ "$title_size" -lt "$MIN_POINT_SIZE" ] && title_size=$MIN_POINT_SIZE
+  # ---- Detect menu type for styling ----
+  local is_subtitle_menu=false
+  local is_extras_menu=false
+  [[ "$title_text" == Subtitles:* ]] && is_subtitle_menu=true
+  [[ "$title_text" == "Extras Menu" ]] && is_extras_menu=true
 
-  # Layout geometry
-  local top_margin=120
-  if [ "$DETECTED_FORMAT" = "ntsc" ]; then
-    top_margin=100
+  # ---- Title configuration ----
+  local title_line1="" title_line2=""
+  local title_size=42
+  local title_bar_h=80
+
+  if [ "$is_subtitle_menu" = true ]; then
+    # Two-line title: "Subtitles" / "{Title Name}"
+    title_line1="Subtitles"
+    title_line2="${title_text#Subtitles: }"
+    title_size=30
+    title_bar_h=100
+  else
+    title_line1="$title_text"
+    title_line2=""
+    # Dynamic title font sizing (shrink for long titles like extras)
+    if [ ${#title_text} -gt 30 ]; then title_size=36; fi
+    if [ ${#title_text} -gt 45 ]; then title_size=30; fi
+    if [ ${#title_text} -gt 60 ]; then title_size=26; fi
+    if [ ${#title_text} -gt 80 ]; then title_size=22; fi
   fi
-  local line_h=$(( (menu_h - top_margin - 60) / num_items ))
+  [ "$title_size" -lt "$MIN_POINT_SIZE" ] && title_size=$MIN_POINT_SIZE
+  [ "$DETECTED_FORMAT" = "ntsc" ] && title_bar_h=$((title_bar_h - 15))
+
+  # Calculate title y-positions (vertically centered in title bar)
+  local title1_y title2_y
+  if [ -n "$title_line2" ]; then
+    local line2_size=$((title_size - 4))
+    [ "$line2_size" -lt "$MIN_POINT_SIZE" ] && line2_size=$MIN_POINT_SIZE
+    local total_title_h=$((title_size + line2_size + 6))
+    title1_y=$(( (title_bar_h - total_title_h) / 2 ))
+    title2_y=$((title1_y + title_size + 6))
+  else
+    title1_y=$(( (title_bar_h - title_size) / 2 ))
+    title2_y=""
+  fi
+
+  local top_margin=$((title_bar_h + 30))
+
+  # ---- Classify buttons into content vs navigation ----
+  local nav_indices=()
+  local content_count=0
+  for i in "${!labels[@]}"; do
+    if [[ "${labels[$i]}" == "Main Menu" ]] || [[ "${labels[$i]}" == "Back to Extras" ]]; then
+      nav_indices+=("$i")
+    else
+      content_count=$((content_count + 1))
+    fi
+  done
+  local nav_count=${#nav_indices[@]}
+
+  # ---- Calculate layout ----
+  # Reserve space at bottom for navigation buttons
+  local nav_zone_y=$((menu_h - 55 * nav_count - 30))
+  [ "$nav_count" -eq 0 ] && nav_zone_y=$((menu_h - 40))
+
+  local line_h=$(( (nav_zone_y - top_margin) / content_count ))
   [ "$line_h" -gt 70 ] && line_h=70
   [ "$line_h" -lt $((MIN_POINT_SIZE + 6)) ] && line_h=$((MIN_POINT_SIZE + 6))
+
   local point_size=$(( line_h / 2 + 10 ))
   [ "$point_size" -gt "$MAX_POINT_SIZE" ] && point_size=$MAX_POINT_SIZE
   [ "$point_size" -lt "$MIN_POINT_SIZE" ] && point_size=$MIN_POINT_SIZE
+
+  # Smaller font for extras menu items (they tend to be long filenames)
+  if [ "$is_extras_menu" = true ]; then
+    point_size=$(( point_size * 3 / 4 ))
+    [ "$point_size" -lt "$MIN_POINT_SIZE" ] && point_size=$MIN_POINT_SIZE
+    line_h=$(( point_size * 2 + 8 ))
+  fi
+
+  # Navigation button styling
+  local nav_point_size=$((point_size - 2))
+  [ "$nav_point_size" -lt "$MIN_POINT_SIZE" ] && nav_point_size=$MIN_POINT_SIZE
+  local nav_line_h=50
+  local nav_left_margin=$((menu_w / 4))  # Indented more for visual distinction
+
   local left_margin=$(( menu_w / 6 ))
   local right_margin=$(( menu_w / 20 ))
 
-  if [ $(( top_margin + num_items * line_h )) -gt "$menu_h" ]; then
-    echo "WARNING: menu '$title_text' has $num_items items and may overflow frame." >&2
+  # ---- Overflow warnings ----
+  if [ "$content_count" -gt 0 ] && [ $((top_margin + content_count * line_h)) -gt "$nav_zone_y" ]; then
+    echo "WARNING: menu '$title_text' content area may overflow." >&2
   fi
+  if [ "$nav_count" -gt 0 ] && [ $((nav_zone_y + nav_count * nav_line_h)) -gt "$menu_h" ]; then
+    echo "WARNING: menu '$title_text' navigation area may overflow." >&2
+  fi
+
   echo "  -> Building Menu: $title_text"
   echo "     Target: ${menu_w}x${menu_h} (${DETECTED_FORMAT^^})"
   echo "     Layout: $num_items items @ ${point_size}pt (title @ ${title_size}pt)"
+  [ "$is_extras_menu" = true ] && echo "     (Extras menu: reduced font)"
   echo "     Buttons:"
   for i in "${!labels[@]}"; do
-    printf "       %d - %s\n" "$i" "${labels[$i]}"
+    local tag=""
+    for ni in "${nav_indices[@]}"; do
+      [ "$i" = "$ni" ] && tag=" [NAV]" && break
+    done
+    printf "       %d - %s%s\n" "$i" "${labels[$i]}" "$tag"
   done
   echo "+-- Muxing menu stream..."
-  # Truncate title if too long for available width
+
+  # ---- Truncate title lines if needed ----
   local title_max_chars=$(( (menu_w - 2 * left_margin) * 10 / (title_size * 6) ))
   [ "$title_max_chars" -lt 10 ] && title_max_chars=10
-  if [ "${#title_text}" -gt "$title_max_chars" ]; then
-    title_text="${title_text:0:$((title_max_chars - 1))}…"
+  if [ ${#title_line1} -gt "$title_max_chars" ]; then
+    title_line1="${title_line1:0:$((title_max_chars - 1))}…"
   fi
-  # Build background with title bar + separator for visual hierarchy
-  local title_bar_h=$((top_margin - 15))
-  local sep_y1=$title_bar_h
-  local sep_y2=$((title_bar_h + 3))
+  if [ -n "$title_line2" ]; then
+    local line2_size=$((title_size - 4))
+    [ "$line2_size" -lt "$MIN_POINT_SIZE" ] && line2_size=$MIN_POINT_SIZE
+    local line2_max_chars=$(( (menu_w - 2 * left_margin) * 10 / (line2_size * 6) ))
+    [ "$line2_max_chars" -lt 10 ] && line2_max_chars=10
+    if [ ${#title_line2} -gt "$line2_max_chars" ]; then
+      title_line2="${title_line2:0:$((line2_max_chars - 1))}…"
+    fi
+  fi
 
+  # ---- Build background with gradient title bar ----
+  local third_h=$((title_bar_h / 3))
   run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg0.log" \
     convert -size "${menu_w}x${menu_h}" xc:black \
-      -fill "#1a1a2e" -draw "rectangle 0,0 ${menu_w},${title_bar_h}" \
+      -fill "#08081a" -draw "rectangle 0,0 ${menu_w},${third_h}" \
+      -fill "#12122a" -draw "rectangle 0,${third_h} ${menu_w},$((third_h * 2))" \
+      -fill "#1a1a2e" -draw "rectangle 0,$((third_h * 2)) ${menu_w},${title_bar_h}" \
+      -fill "#555577" -draw "rectangle 0,${title_bar_h} ${menu_w},$((title_bar_h + 2))" \
       -gravity NorthWest -fill white -font "$FONT" -pointsize "$title_size" \
-      -annotate +${left_margin}+$((top_margin - 70)) "$title_text" \
-      -fill "#555555" -draw "rectangle 0,${sep_y1} ${menu_w},${sep_y2}" \
+      -annotate +${left_margin}+${title1_y} "$title_line1" \
       "${pfx}_bg.png"
 
-  # Build highlight overlay (transparent, only button text)
+  # Second title line (lighter color for visual hierarchy)
+  if [ -n "$title_line2" ]; then
+    local line2_size=$((title_size - 4))
+    [ "$line2_size" -lt "$MIN_POINT_SIZE" ] && line2_size=$MIN_POINT_SIZE
+    run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg0b.log" \
+      convert "${pfx}_bg.png" \
+        -gravity NorthWest -fill "#9999bb" -font "$FONT" -pointsize "$line2_size" \
+        -annotate +${left_margin}+${title2_y} "$title_line2" \
+        "${pfx}_bg_tmp.png" && mv "${pfx}_bg_tmp.png" "${pfx}_bg.png"
+  fi
+
+  # Separator line before navigation buttons
+  if [ "$nav_count" -gt 0 ]; then
+    local nav_sep_y=$((nav_zone_y - 15))
+    run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg0c.log" \
+      convert "${pfx}_bg.png" \
+        -fill "#333355" -draw "rectangle $((left_margin - 10)),${nav_sep_y} $((menu_w - left_margin + 10)),$((nav_sep_y + 1))" \
+        "${pfx}_bg_tmp.png" && mv "${pfx}_bg_tmp.png" "${pfx}_bg.png"
+  fi
+
+  # ---- Build highlight overlay (transparent, only button text) ----
   run_logged "$LOG_DIR/$(basename "$pfx")_convert_hl0.log" \
     convert -size "${menu_w}x${menu_h}" xc:none "${pfx}_hl.png"
 
-  local y0_arr=() y1_arr=()
+  # ---- Draw all buttons ----
+  local y0_arr=() y1_arr=() x0_arr=() x1_arr=()
+  local current_y=$top_margin
+  local nav_drawn=0
+
   for i in "${!labels[@]}"; do
     local text="${labels[$i]}"
-    local max_chars=$(( (menu_w - left_margin - right_margin) * 10 / (point_size * 6) ))
-    [ "$max_chars" -lt 4 ] && max_chars=4
+    local is_nav=false
+    for ni in "${nav_indices[@]}"; do
+      [ "$i" = "$ni" ] && is_nav=true && break
+    done
 
+    local this_left this_y this_ps this_color
+    if [ "$is_nav" = true ]; then
+      # Navigation button: gold color, indented, separate zone
+      this_left=$nav_left_margin
+      this_y=$((nav_zone_y + nav_drawn * nav_line_h))
+      this_ps=$nav_point_size
+      this_color="#ffcc44"
+      nav_drawn=$((nav_drawn + 1))
+    else
+      # Content button: white, normal position
+      this_left=$left_margin
+      this_y=$current_y
+      this_ps=$point_size
+      this_color="white"
+      current_y=$((current_y + line_h))
+    fi
+
+    # Truncate text if too long
+    local max_chars=$(( (menu_w - this_left - right_margin) * 10 / (this_ps * 6) ))
+    [ "$max_chars" -lt 4 ] && max_chars=4
     if [ "${#text}" -gt "$max_chars" ]; then
       text="${text:0:$((max_chars - 1))}…"
     fi
-    local y=$((top_margin + i * line_h))
-    # Tightly wrap the text bounding box (text starts at 'y' with NorthWest gravity)
-    y0_arr[$i]=$((y - 5))
-    y1_arr[$i]=$((y + point_size + 5))
-    # Use temporary file for ImageMagick to prevent corruption
+
+    # Store button bounds for spumux
+    y0_arr[$i]=$((this_y - 5))
+    y1_arr[$i]=$((this_y + this_ps + 5))
+    x0_arr[$i]=$((this_left - 20))
+    x1_arr[$i]=$((menu_w - left_margin))
+
+    # Draw on background with appropriate color
     run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg${i}.log" \
       convert "${pfx}_bg.png" \
-        -gravity NorthWest -fill white -font "$FONT" -pointsize "$point_size" \
-        -annotate +${left_margin}+${y} "$text" \
+        -gravity NorthWest -fill "$this_color" -font "$FONT" -pointsize "$this_ps" \
+        -annotate +${this_left}+${this_y} "$text" \
         "${pfx}_bg_tmp.png" && mv "${pfx}_bg_tmp.png" "${pfx}_bg.png"
-    # Use red fill and blue stroke so spumux has 3 distinct colors (transparent, red, blue) to pick masks. Disable anti-aliasing and force 3 colors to satisfy spumux's 16-color limit
+
+    # Draw on highlight overlay (red fill + blue stroke for spumux 3-color mask)
     run_logged "$LOG_DIR/$(basename "$pfx")_convert_hl${i}.log" \
       convert "${pfx}_hl.png" +antialias \
-        -gravity NorthWest -fill red -stroke blue -strokewidth 1 -font "$FONT" -pointsize "$point_size" \
-        -annotate +${left_margin}+${y} "$text" \
+        -gravity NorthWest -fill red -stroke blue -strokewidth 1 -font "$FONT" -pointsize "$this_ps" \
+        -annotate +${this_left}+${this_y} "$text" \
         -colors 3 \
         "${pfx}_hl_tmp.png" && mv "${pfx}_hl_tmp.png" "${pfx}_hl.png"
   done
+
+  # ---- Generate blank menu video ----
   run_logged "$LOG_DIR/$(basename "$pfx")_ffmpeg_blank.log" \
     ffmpeg -y -f lavfi -i "color=c=black:s=${menu_w}x${menu_h}:d=${MENU_SECONDS}:r=${FPS}" \
             -f lavfi -i "anullsrc=r=48000:cl=stereo" \
             -shortest -pix_fmt yuv420p -target "$TARGET" \
             -b:v 6000k -maxrate 9000k -minrate 6000k -bufsize 1835k \
             "${pfx}_blank.mpg"
+
+  # ---- Overlay background onto blank video ----
   run_logged "$LOG_DIR/$(basename "$pfx")_ffmpeg_merge.log" \
     ffmpeg -y -i "${pfx}_blank.mpg" -i "${pfx}_bg.png" \
             -filter_complex "[0:v][1:v]overlay=0:0[v]" -map "[v]" -map 0:a \
             -c:a copy -pix_fmt yuv420p -target "$TARGET" -f dvd \
             -b:v 6000k -maxrate 9000k -minrate 6000k -bufsize 1835k \
             "${pfx}_merged.mpg"
+  # ---- Generate spumux XML ----
   {
     echo '<subpictures><stream>'
     # Add end="9999" so buttons don't disappear when the menu video loops
@@ -338,12 +476,13 @@ build_menu() {
     for i in "${!labels[@]}"; do
       local up=$(( (i - 1 + num_items) % num_items ))
       local down=$(( (i + 1) % num_items ))
-      echo "    <button name=\"b$i\" x0=\"$((left_margin - 20))\" y0=\"${y0_arr[$i]}\" x1=\"$((menu_w - left_margin))\" y1=\"${y1_arr[$i]}\" up=\"b$up\" down=\"b$down\" />"
+      echo "    <button name=\"b$i\" x0=\"${x0_arr[$i]}\" y0=\"${y0_arr[$i]}\" x1=\"${x1_arr[$i]}\" y1=\"${y1_arr[$i]}\" up=\"b$up\" down=\"b$down\" />"
     done
     echo '  </spu>'
     echo '</stream></subpictures>'
   } > "${pfx}_btn.xml"
 
+  # ---- Mux highlights with spumux ----
   run_logged "$LOG_DIR/$(basename "$pfx")_spumux.log" \
     bash -c "spumux -m dvd '${pfx}_btn.xml' < '${pfx}_merged.mpg' > '$out_mpg'"
 

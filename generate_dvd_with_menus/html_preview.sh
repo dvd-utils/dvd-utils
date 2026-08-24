@@ -186,11 +186,22 @@ srt_to_json() {
       gsub(/,/, ".", a[3])
       return a[1] * 3600 + a[2] * 60 + a[3]
     }
-    function esc(s) {
-      gsub(/\\/, "\\\\", s)
-      gsub(/"/, "\\\"", s)
-      gsub(/</, "\\u003c", s)
-      return s
+    # esc(): make s safe as a JSON string value. Backslashes and newlines are rebuilt with split() + plain concatenation because gsub() REPLACEMENT strings containing "\\" are ambiguous across awks (gawk collapses "\\\\" to one backslash, mawk passes both through). Concatenation has exactly one meaning everywhere.
+    function esc(s,   m, a, i, r, sent) {
+      sent = sprintf("%c", 1)             # sentinel char, absent from SRT text
+      s = s sent                          # protects a trailing "\" (split()
+      m = split(s, a, "\\\\")             # drops trailing empty fields)
+      r = ""
+      for (i = 1; i <= m; i++)
+        r = r (i > 1 ? "\\\\" : "") a[i]  # rejoin: every "\" is now "\\"
+      sub(sent "$", "", r)                # drop the sentinel
+      gsub(/"/, "\\\"", r)                # " -> \"
+      m = split(r, a, "\n")               # real newline -> the two chars \ n
+      r = a[1]
+      for (i = 2; i <= m; i++)
+        r = r "\\n" a[i]
+      gsub(/</, "\\u003c", r)             # < -> \u003c (</script> safety)
+      return r
     }
     function emit(   as, ae) {
       if (txt == "") return
@@ -216,13 +227,12 @@ srt_to_json() {
       next
     }
     /^[[:space:]]*$/ { if (has) emit(); has = 0; intext = 0; next }
-    { if (intext) txt = txt (txt == "" ? "" : "\\n") $0 }
+    { if (intext) txt = txt (txt == "" ? "" : "\n") $0 }
     END { if (has) emit(); print (n > 0 ? "\n  " : "") "]" }
   ' "$srt" > "$json_out" 2>/dev/null || true
 
   [ -s "$json_out" ] && grep -q '"start"' "$json_out"
 }
-
 # ---------------------------------------------------------------------------
 # HELPER: Extract subtitle frames + timing as overlay JSON for one sub file.
 #   - .srt            -> text entries
@@ -374,7 +384,12 @@ subs_json_ensure() {
     echo "  -> Repairing locale-corrupted subtitle data in $(basename "$f")" >&2
     sed -i -E 's/("(start|end|x|y|w)": -?[0-9]+),([0-9]+)/\1.\3/g' "$f"
   fi
-
+  # TODO: uncomment...
+#  # Repair the doubled-backslash newline joiner ("\\n" -> "\n" in text values). Caveat: also rewrites a genuine literal backslash-before-n in subtitle text, which effectively never occurs.
+#  if grep -q '\\\\n' "$f"; then
+#    echo "  -> Repairing doubled newline escapes in $(basename "$f")" >&2
+#    sed -i 's/\\\\n/\\n/g' "$f"
+#  fi
   if command -v jq >/dev/null 2>&1; then
     if ! jq -e . "$f" >/dev/null 2>&1; then
       echo "  -> Warning: $(basename "$f") is not valid JSON; regenerating" >&2
