@@ -100,76 +100,13 @@ source "$SCRIPT_DIR/subtitles.sh"
 source "$SCRIPT_DIR/html_preview.sh"
 source "$SCRIPT_DIR/detect_dvd_format.sh"
 source "$SCRIPT_DIR/dvd_xml.sh"
+source "$SCRIPT_DIR/resolve_bdsup2sub.sh"
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing required tool: $1" >&2; exit 1; }; }
 
 # ----------------------------- TOOL CHECKS ----------------------------------
 for t in dvdauthor spumux ffmpeg ffprobe convert; do need "$t"; done
-
-# ---------------------------------------------------------------------------
-# BDSUP2SUB TOOL RESOLUTION
-# ---------------------------------------------------------------------------
-# Ubuntu does not provide ogmrip/subp2pgm/bdsup2sub++ in the standard repositories anymore, even with the Universe repository enabled.
-# Therefore, we can not rely on apt and need to look for our own executable.
-#
-# Resolution order:
-#   1. bdsup2sub++ installed in system PATH
-#   2. Local bdsup2sub++ development builds
-#   3. bdsup2sub (original Java wrapper) in system PATH
-#   4. Local bdsup2sub.jar via Java
-#
-# The resolved command is stored in the BDSUP2SUB_CMD array so it can be
-# safely invoked with:
-#   "${BDSUP2SUB_CMD[@]}" <arguments>
-# ---------------------------------------------------------------------------
-
-BDSUP2SUB_CMD=()
-
-# Prefer the native bdsup2sub++ executable from PATH.
-if command -v bdsup2sub++ >/dev/null 2>&1; then
-  BDSUP2SUB_CMD=("$(command -v bdsup2sub++)")
-
-# Look for local development/build copies of bdsup2sub++.
-else
-  for candidate in "./VobSub-Utilities/bdsup2sub++" "./VobSub-Utilities/build/bdsup2sub++" "./sup2vobsub/bdsup2sub++" "./sup2vobsub/build/bdsup2sub++"; do
-    if [ -x "$candidate" ]; then BDSUP2SUB_CMD=("$candidate"); break; fi
-  done
-
-  # Fall back to the original Java bdsup2sub wrapper in PATH.
-  if [ ${#BDSUP2SUB_CMD[@]} -eq 0 ] && command -v bdsup2sub >/dev/null 2>&1; then
-    BDSUP2SUB_CMD=("$(command -v bdsup2sub)")
-
-  # Fall back to a local bdsup2sub.jar.
-  elif [ ${#BDSUP2SUB_CMD[@]} -eq 0 ] && command -v java >/dev/null 2>&1 && [ -f "./bdsup2sub.jar" ]; then
-    BDSUP2SUB_CMD=("java" "-jar" "./bdsup2sub.jar")
-  fi
-fi
-
-# No supported subtitle conversion tool was found.
-if [ ${#BDSUP2SUB_CMD[@]} -eq 0 ]; then
-  echo "ERROR: No supported BDSUP2SUB subtitle converter was found." >&2
-  echo >&2
-  echo "Searched for:" >&2
-  echo "  - bdsup2sub++ in system PATH" >&2
-  echo "  - ./VobSub-Utilities/bdsup2sub++" >&2
-  echo "  - ./VobSub-Utilities/build/bdsup2sub++" >&2
-  echo "  - ./sup2vobsub/bdsup2sub++" >&2
-  echo "  - ./sup2vobsub/build/bdsup2sub++" >&2
-  echo "  - bdsup2sub in system PATH" >&2
-  echo "  - ./bdsup2sub.jar via Java" >&2
-  echo >&2
-  echo "Install or compile bdsup2sub++:" >&2
-  echo "git clone https://github.com/prinsbert/VobSub-Utilities && cd ./BDSup2SubPlusPlus && mkdir -p build && cd build && qmake6 ../src/bdsup2sub++.pro" >&2
-  echo "make"
-  echo "cd ../../"
-  echo >&2
-  echo "Expected local build locations:" >&2
-  echo "  ./sup2vobsub/" >&2
-  echo "  ./VobSub-Utilities/" >&2
-  exit 1
-fi
-echo "Using subtitle converter: ${BDSUP2SUB_CMD[*]}"
-# ----------------------------------------------------------------------------
+resolve_bdsup2sub
 
 # Define fallback fonts (prefer condensed/narrow variants for tighter menu text)
 FALLBACK_FONTS=(
