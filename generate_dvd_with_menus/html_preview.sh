@@ -704,11 +704,11 @@ generate_html_preview() {
   <div class="meta">
     Format: ${DETECTED_FORMAT^^} ${WIDTH}&times;${HEIGHT} @ ${FPS}fps &middot;
     Titles: ${#ANALYSIS_TITLES[@]} &middot;
-    Generated: $(date '+%Y-%m-%d %H:%M')
   </div>
 
   <div class="dvd-frame">
 HTMLEOF
+# Generated: $(date '+%Y-%m-%d %H:%M')
 
   # ================================================================
   # VMGM Main Menu (PGC 1, entry="title")

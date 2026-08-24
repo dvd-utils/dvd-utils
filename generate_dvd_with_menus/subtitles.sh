@@ -449,10 +449,7 @@ EOF
     echo "     Muxing into video..."
     local next_vid="$WORK_DIR/ts${ts_idx}_mux_${i}.mpg"
     # Mux directly using the generated DVDAuthor-formatted XML
-    run_logged "$LOG_DIR/ts${ts_idx}_spumux_${i}.log" \
-      bash -c 'spumux -s "$1" "$2" < "$3" > "$4"' \
-      _ "$i" "${pfx}.xml" "$current_vid" "$next_vid"
-
+    run_logged "$LOG_DIR/ts${ts_idx}_spumux_${i}.log" bash -c 'spumux -s "$1" "$2" < "$3" > "$4"' _ "$i" "${pfx}.xml" "$current_vid" "$next_vid"
     [ -s "$next_vid" ] || { echo "ERROR: spumux produced an empty output muxing subtitle track $i into $(basename "$in_mpg")." >&2; exit 1; }
     current_vid="$next_vid"
   done
