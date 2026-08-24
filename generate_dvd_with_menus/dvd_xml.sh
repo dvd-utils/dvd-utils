@@ -67,11 +67,11 @@ append_titleset_xml() {
 
     XML_TITLESETS+="    <menus lang=\"en\">\n"
     XML_TITLESETS+="      <video format=\"${DETECTED_FORMAT}\" resolution=\"${WIDTH}x${HEIGHT}\" />\n"
-    # pause="inf" on <vob> holds the still-frame indefinitely to prevent the 
+    # pause="inf" on <vob> holds the still-frame indefinitely to prevent the
     # DVD VM from resetting the button highlight state when the cell loops.
     XML_TITLESETS+="      <pgc entry=\"root,subtitle\">\n"
     XML_TITLESETS+="        <vob file=\"$menu_mpg\" pause=\"inf\" />\n"
-    
+
     local btn_idx=0
     for i in "${!sub_labels[@]}"; do
       local val=$((64 + i))
@@ -99,7 +99,7 @@ append_titleset_xml() {
 
   XML_TITLESETS+="    <titles>\n"
   XML_TITLESETS+="      <video format=\"${DETECTED_FORMAT}\" resolution=\"${WIDTH}x${HEIGHT}\" />\n"
-  
+
   if [ "$has_subs" -eq 1 ]; then
     for i in "${!sub_labels[@]}"; do
       XML_TITLESETS+="      <subpicture />\n"
@@ -211,7 +211,7 @@ generate_extras_pgc_xml() {
 # ---------------------------------------------------------------------------
 assemble_dvdauthor_xml() {
   local xml_file="$WORK_DIR/dvdauthor.xml"
-  
+
   printf '<?xml version="1.0"?>\n' > "$xml_file"
   printf '<dvdauthor dest="%s" jumppad="yes">\n\n' "$OUT_DIR" >> "$xml_file"
 
@@ -221,9 +221,9 @@ assemble_dvdauthor_xml() {
   printf '    <menus>\n' >> "$xml_file"
   printf '      <video format="%s" resolution="%sx%s" />\n' "$DETECTED_FORMAT" "$WIDTH" "$HEIGHT" >> "$xml_file"
 
-  # pause="inf" on <vob> for all menu PGCs ensures that the still-frame holds 
+  # pause="inf" on <vob> for all menu PGCs ensures that the still-frame holds
   # indefinitely and prevents the button highlight from resetting.
-  
+
   # PGC 1: Main Menu
   printf '      <pgc entry="title">\n' >> "$xml_file"
   printf '        <vob file="%s" pause="inf" />\n' "$VMGM_MPG" >> "$xml_file"
@@ -242,7 +242,7 @@ assemble_dvdauthor_xml() {
 
   # Append all previously generated titlesets
   printf '%b' "$XML_TITLESETS" >> "$xml_file"
-  
+
   printf '</dvdauthor>\n' >> "$xml_file"
 
   echo "Generated dvdauthor XML structure: $xml_file"
@@ -253,10 +253,10 @@ assemble_dvdauthor_xml() {
 # ---------------------------------------------------------------------------
 author_dvd() {
   local xml_file="$WORK_DIR/dvdauthor.xml"
-  
+
   echo "Clearing output directory: $OUT_DIR"
   rm -rf "$OUT_DIR"
-  
+
   echo "Authoring DVD (this may take a moment)..."
   run_logged "$LOG_DIR/dvdauthor.log" dvdauthor -x "$xml_file"
 
@@ -370,6 +370,16 @@ resolve_menu_background() {
 #   pagination to wire "Next page" / "Prev page" buttons.
 #   When extra_vmgm_pairs are provided, this menu lives in the VMGM and
 #   those button actions are appended to the label list automatically.
+# ---------------------------------------------------------------------------
+# Usage:
+# # Default: left-aligned buttons
+#   build_menu "menu.mpg" "Main Menu" "Play" "Scene Selection" "Subtitles"
+#
+# # Center-aligned buttons
+#   MENU_BUTTON_ALIGN=center build_menu "menu.mpg" "Main Menu" "Play" "Scene Selection" "Subtitles"
+#
+# # Or set it globally earlier in your script
+#   export MENU_BUTTON_ALIGN=center
 # ---------------------------------------------------------------------------
 build_menu() {
   local out_mpg="$1"
@@ -580,75 +590,88 @@ build_menu() {
 
   # ---- Build highlight overlay (transparent, only button text) ----
   run_logged "$LOG_DIR/$(basename "$pfx")_convert_hl0.log" convert -size "${menu_w}x${menu_h}" xc:none "${pfx}_hl.png"
-  # ---- Draw all content + nav buttons ----
-  local y0_arr=() y1_arr=() x0_arr=() x1_arr=()
-  local current_y=$top_margin
-  local nav_drawn=0
-  local center_y=$(( menu_h / 2 ))
-  local center_x=$(( menu_w / 2 ))
+    # ---- Draw all content + nav buttons ----
+    local y0_arr=() y1_arr=() x0_arr=() x1_arr=()
+    local current_y=$top_margin
+    local nav_drawn=0
+    local center_y=$(( menu_h / 2 ))
+    local center_x=$(( menu_w / 2 ))
 
-  for i in "${!labels[@]}"; do
-    local text="${labels[$i]}"
-    local is_nav=false
-    for ni in "${nav_indices[@]}"; do
-      [ "$i" = "$ni" ] && is_nav=true && break
+    # Button alignment: "left" (default) or "center"
+    # Set MENU_BUTTON_ALIGN=center before calling to enable center alignment
+    local btn_align="${MENU_BUTTON_ALIGN:-left}"
+
+    for i in "${!labels[@]}"; do
+      local text="${labels[$i]}"
+      local is_nav=false
+      for ni in "${nav_indices[@]}"; do
+        [ "$i" = "$ni" ] && is_nav=true && break
+      done
+
+      local this_left this_y this_ps this_color
+      if [ "$is_nav" = true ]; then
+        # Navigation button: gold color, indented, separate zone
+        this_left=$nav_left_margin
+        this_y=$((nav_zone_y + nav_drawn * nav_line_h))
+        this_ps=$nav_point_size
+        this_color="#ffcc44"
+        nav_drawn=$((nav_drawn + 1))
+      else
+        # Content button: white, normal position
+        this_left=$left_margin
+        this_y=$current_y
+        this_ps=$point_size
+        this_color="white"
+        current_y=$((current_y + line_h))
+      fi
+
+      # Truncate text if too long
+      local max_chars=$(( (menu_w - this_left - right_margin) * 10 / (this_ps * 6) ))
+      [ "$max_chars" -lt 4 ] && max_chars=4
+      if [ "${#text}" -gt "$max_chars" ]; then
+        text="${text:0:$((max_chars - 1))}…"
+      fi
+
+      # Store button bounds for spumux
+      y0_arr[$i]=$((this_y - 5))
+      y1_arr[$i]=$((this_y + this_ps + 5))
+      x0_arr[$i]=$((this_left - 20))
+      x1_arr[$i]=$((menu_w - left_margin))
+
+      # Calculate annotation position based on alignment
+      local annot_gravity x_off y_off
+      if [ "$btn_align" = "center" ]; then
+        # Center-aligned within button area
+        annot_gravity="center"
+        local btn_center_x=$(( (this_left + menu_w - left_margin) / 2 ))
+        local btn_center_y=$(( this_y + this_ps / 2 ))
+        x_off=$(( btn_center_x - center_x ))
+        y_off=$(( btn_center_y - center_y ))
+      else
+        # Left-aligned: use West gravity so x offset is from left edge
+        annot_gravity="West"
+        x_off=$this_left
+        y_off=$(( this_y - center_y ))
+      fi
+
+      # Draw on background
+      run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg${i}.log" \
+        convert "${pfx}_bg.png" \
+          -gravity "$annot_gravity" -fill "$this_color" -font "$FONT" -pointsize "$this_ps" \
+          -annotate +${x_off}+${y_off} "$text" \
+          "${pfx}_bg_tmp.png" && mv "${pfx}_bg_tmp.png" "${pfx}_bg.png"
+
+      # Draw on highlight overlay (red fill + blue stroke for spumux 3-color mask)
+      run_logged "$LOG_DIR/$(basename "$pfx")_convert_hl${i}.log" \
+        convert "${pfx}_hl.png" +antialias \
+          -gravity "$annot_gravity" -fill red -stroke blue -strokewidth 1 -font "$FONT" -pointsize "$this_ps" \
+          -annotate +${x_off}+${y_off} "$text" \
+          -colors 3 \
+          "${pfx}_hl_tmp.png" && mv "${pfx}_hl_tmp.png" "${pfx}_hl.png"
     done
 
-    local this_left this_y this_ps this_color
-    if [ "$is_nav" = true ]; then
-      # Navigation button: gold color, indented, separate zone
-      this_left=$nav_left_margin
-      this_y=$((nav_zone_y + nav_drawn * nav_line_h))
-      this_ps=$nav_point_size
-      this_color="#ffcc44"
-      nav_drawn=$((nav_drawn + 1))
-    else
-      # Content button: white, normal position
-      this_left=$left_margin
-      this_y=$current_y
-      this_ps=$point_size
-      this_color="white"
-      current_y=$((current_y + line_h))
-    fi
-
-    # Truncate text if too long
-    local max_chars=$(( (menu_w - this_left - right_margin) * 10 / (this_ps * 6) ))
-    [ "$max_chars" -lt 4 ] && max_chars=4
-    if [ "${#text}" -gt "$max_chars" ]; then
-      text="${text:0:$((max_chars - 1))}…"
-    fi
-
-    # Store button bounds for spumux
-    y0_arr[$i]=$((this_y - 5))
-    y1_arr[$i]=$((this_y + this_ps + 5))
-    x0_arr[$i]=$((this_left - 20))
-    x1_arr[$i]=$((menu_w - left_margin))
-
-    # Calculate center of button area, then offsets from image center
-    local btn_center_x=$(( (this_left + menu_w - left_margin) / 2 ))
-    local btn_center_y=$(( this_y + this_ps / 2 ))
-    local x_offset=$(( btn_center_x - center_x ))
-    local y_offset=$(( btn_center_y - center_y ))
-
-    # Draw on background (CENTER aligned)
-    run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg${i}.log" \
-      convert "${pfx}_bg.png" \
-        -gravity center -fill "$this_color" -font "$FONT" -pointsize "$this_ps" \
-        -annotate +${x_offset}+${y_offset} "$text" \
-        "${pfx}_bg_tmp.png" && mv "${pfx}_bg_tmp.png" "${pfx}_bg.png"
-
-    # Draw on highlight overlay (red fill + blue stroke for spumux 3-color mask)
-    run_logged "$LOG_DIR/$(basename "$pfx")_convert_hl${i}.log" \
-      convert "${pfx}_hl.png" +antialias \
-        -gravity center -fill red -stroke blue -strokewidth 1 -font "$FONT" -pointsize "$this_ps" \
-        -annotate +${x_offset}+${y_offset} "$text" \
-        -colors 3 \
-        "${pfx}_hl_tmp.png" && mv "${pfx}_hl_tmp.png" "${pfx}_hl.png"
-  done
-
-  # ---- Draw pagination buttons (centered at bottom) ----
+  # ---- Draw pagination buttons (always centered within their slots) ----
   if [ "$num_pairs" -gt 0 ]; then
-    # Place pagination buttons in a row at the very bottom
     local pag_y=$((menu_h - 40))
     local pag_total_w=$(( num_pairs * 160 ))
     local pag_start_x=$(( (menu_w - pag_total_w) / 2 ))
@@ -662,7 +685,7 @@ build_menu() {
       local btn_global_idx=$((num_items + p))
 
       local px=$(( pag_start_x + p * 160 ))
-      # Center text within its 160px slot
+      # Center of each 160px slot
       local ptx=$(( px + 80 ))
 
       y0_arr[$btn_global_idx]=$((pag_y - 5))
@@ -670,7 +693,7 @@ build_menu() {
       x0_arr[$btn_global_idx]=$((px - 10))
       x1_arr[$btn_global_idx]=$((px + 150))
 
-      # Calculate offsets from image center for pagination button
+      # Pagination buttons are always centered within their slot
       local pag_btn_center_y=$(( pag_y + pag_ps / 2 ))
       local pag_x_offset=$(( ptx - center_x ))
       local pag_y_offset=$(( pag_btn_center_y - center_y ))
