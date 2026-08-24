@@ -8,7 +8,9 @@
 #    - WORK_DIR, OUT_DIR, LOG_DIR
 #    - EXTRAS_PER_PAGE, EXTRAS_MENU_LABELS, EXTRAS_MENU_TARGETS
 # ============================================================================
-
+CONST_MAIN_MENU="Main menu"
+CONST_BACK_TO_EXTRAS="Back to extras"
+CONST_EXTRAS_MENU="Extras"
 # ---------------------------------------------------------------------------
 # CORE LOGIC GLOBALS (Required for XML assembly)
 # ---------------------------------------------------------------------------
@@ -54,11 +56,11 @@ append_titleset_xml() {
     local menu_mpg="$WORK_DIR/ts${ts_idx}_menu.mpg"
     # Build labels: subtitle options + navigation buttons
     local labels=("${sub_labels[@]}" "No subtitles")
-    # Add "Back to Extras" for extra titlesets (ts_idx > 1 means it's an extra)
+    # Add CONST_BACK_TO_EXTRAS for extra titlesets (ts_idx > 1 means it's an extra)
     if [ "$ts_idx" -gt 1 ]; then
-      labels+=("Back to Extras")
+      labels+=("$CONST_BACK_TO_EXTRAS")
     fi
-    labels+=("Main Menu")
+    labels+=("$CONST_MAIN_MENU")
 
     local menu_title="Subtitles: ${title_pretty}"
     [ "$ts_idx" -eq 1 ] && menu_title="Movie Subtitles"
@@ -84,7 +86,7 @@ append_titleset_xml() {
     XML_TITLESETS+="        <button name=\"b$btn_idx\"> { subtitle = 62; g2 = 1; if (g1 eq 1) resume; else jump titleset $ts_idx title 1; } </button>\n"
     btn_idx=$((btn_idx+1))
 
-    # "Back to Extras" button (only for extras, ts_idx > 1) jumps to PGC 2 in VMGM
+    # "Back to extras" button (only for extras, ts_idx > 1) jumps to PGC 2 in VMGM
     if [ "$ts_idx" -gt 1 ]; then
       XML_TITLESETS+="        <button name=\"b$btn_idx\"> { g1 = 0; g2 = 0; jump vmgm menu 2; } </button>\n"
       btn_idx=$((btn_idx+1))
@@ -151,7 +153,7 @@ generate_extras_pgc_xml() {
     done
 
     # Always add "Main Menu" at the bottom
-    page_labels+=("Main Menu")
+    page_labels+=("$CONST_MAIN_MENU")
     page_targets+=("g1 = 0; g2 = 0; jump vmgm menu entry title;")
 
     # Build pagination pair args for build_menu
@@ -166,8 +168,8 @@ generate_extras_pgc_xml() {
     fi
 
     local page_mpg="$WORK_DIR/vmgm_extras_p${page}.mpg"
-    local page_title="Extras Menu"
-    [ "$local_num_pages" -gt 1 ] && page_title="Extras Menu (Page $((page + 1))/$local_num_pages)"
+    local page_title="$CONST_EXTRAS_MENU"
+    [ "$local_num_pages" -gt 1 ] && page_title="Extras (Page $((page + 1))/$local_num_pages)"
 
     # Call build_menu with optional --vmgm-pairs-- sentinel
     if [ ${#pag_args[@]} -gt 0 ]; then
@@ -196,7 +198,7 @@ generate_extras_pgc_xml() {
     # Content buttons (non-nav labels)
     for i in "${!page_targets[@]}"; do
       local is_nav=false
-      if [[ "${page_labels[$i]}" == "Main Menu" ]] || [[ "${page_labels[$i]}" == "Back to Extras" ]]; then
+      if [[ "${page_labels[$i]}" == "$CONST_MAIN_MENU" ]] || [[ "${page_labels[$i]}" == "$CONST_BACK_TO_EXTRAS" ]]; then
         is_nav=true
       fi
       if [ "$is_nav" = false ]; then
@@ -211,10 +213,10 @@ generate_extras_pgc_xml() {
       pgc_xml+="        <button name=\"b${btn_idx}\"> { $pcmd } </button>\n"
       btn_idx=$((btn_idx + 1))
     done
-    # Navigation buttons (Main Menu, Back to Extras) — last so down wraps to first content
+    # Navigation buttons (Main Menu, Back to extras) — last so down wraps to first content
     for i in "${!page_targets[@]}"; do
       local is_nav=false
-      if [[ "${page_labels[$i]}" == "Main Menu" ]] || [[ "${page_labels[$i]}" == "Back to Extras" ]]; then
+      if [[ "${page_labels[$i]}" == "$CONST_MAIN_MENU" ]] || [[ "${page_labels[$i]}" == "$CONST_BACK_TO_EXTRAS" ]]; then
         is_nav=true
       fi
       if [ "$is_nav" = true ]; then
@@ -395,10 +397,10 @@ resolve_menu_background() {
 # ---------------------------------------------------------------------------
 # Usage:
 # # Default: left-aligned buttons
-#   build_menu "menu.mpg" "Main Menu" "Play" "Scene Selection" "Subtitles"
+#   build_menu "menu.mpg" "$CONST_MAIN_MENU" "Play" "Scene Selection" "Subtitles"
 #
 # # Center-aligned buttons
-#   MENU_BUTTON_ALIGN=center build_menu "menu.mpg" "Main Menu" "Play" "Scene Selection" "Subtitles"
+#   MENU_BUTTON_ALIGN=center build_menu "menu.mpg" "$CONST_MAIN_MENU" "Play" "Scene Selection" "Subtitles"
 #
 # # Or set it globally earlier in your script
 #   export MENU_BUTTON_ALIGN=center
@@ -444,7 +446,7 @@ build_menu() {
   local is_subtitle_menu=false
   local is_extras_menu=false
   [[ "$title_text" == Subtitles:* ]] && is_subtitle_menu=true
-  [[ "$title_text" == "Extras Menu" ]] || [[ "$title_text" == "Extras"*"("*")" ]] && is_extras_menu=true
+  [[ "$title_text" == "$CONST_EXTRAS_MENU" ]] || [[ "$title_text" == "$CONST_EXTRAS_MENU"*"("*")" ]] && is_extras_menu=true
 
   # ---- Title configuration ----
   local title_line1="" title_line2=""
@@ -487,7 +489,7 @@ build_menu() {
   # ---- Classify original labels into content vs navigation ----
   local nav_indices=()
   for i in "${!labels[@]}"; do
-    if [[ "${labels[$i]}" == "Main Menu" ]] || [[ "${labels[$i]}" == "Back to Extras" ]]; then
+    if [[ "${labels[$i]}" == "$CONST_MAIN_MENU" ]] || [[ "${labels[$i]}" == "$CONST_BACK_TO_EXTRAS" ]]; then
       nav_indices+=("$i")
     fi
   done
@@ -697,49 +699,115 @@ build_menu() {
       current_y=$((current_y + line_h))
     fi
 
-    # Truncate text if too long
+    # ---- Split text into at most 2 lines if too wide ----
     local max_chars=$(( (menu_w - this_left - right_margin) * 10 / (this_ps * 6) ))
     [ "$max_chars" -lt 4 ] && max_chars=4
+
+    local line1="$text"
+    local line2=""
+    local draw_ps=$this_ps
+    local extra_h=0
+
     if [ "${#text}" -gt "$max_chars" ]; then
-      text="${text:0:$((max_chars - 1))}…"
+      # Find a word-boundary break point in a window around max_chars
+      local break_pos=-1
+      local lo=$(( max_chars - 10 ))
+      [ "$lo" -lt 1 ] && lo=1
+      local hi=$(( max_chars + 5 ))
+      [ "$hi" -ge ${#text} ] && hi=$(( ${#text} - 1 ))
+
+      for sep in ' ' '_' '.' '-' ',' '/' '\\'; do
+        for pos in $(seq "$hi" -1 "$lo"); do
+          if [ "${text:$pos:1}" = "$sep" ]; then
+            break_pos=$pos
+            break 2
+          fi
+        done
+      done
+
+      # Fall back to hard split if no separator found
+      [ "$break_pos" -lt 0 ] && break_pos=$(( max_chars - 1 ))
+
+      line1="${text:0:$((break_pos + 1))}"
+      line2="${text:$((break_pos + 1))}"
+
+      # Trim trailing whitespace from line1
+      while [ "${line1: -1}" = " " ]; do line1="${line1%?}"; done
+      # Trim leading whitespace from line2
+      while [ "${line2:0:1}" = " " ]; do line2="${line2:1}"; done
+
+      # Truncate line2 if still too long
+      if [ "${#line2}" -gt "$max_chars" ]; then
+        line2="${line2:0:$((max_chars - 1))}…"
+      fi
+
+      # Use slightly smaller font so 2 lines fit in the button slot
+      draw_ps=$(( this_ps - 2 ))
+      [ "$draw_ps" -lt "$MIN_POINT_SIZE" ] && draw_ps=$MIN_POINT_SIZE
+      extra_h=$draw_ps
     fi
 
-    # Store button bounds for spumux
+    # Store button bounds for spumux (taller for 2-line buttons)
     y0_arr[$i]=$((this_y - 5))
-    y1_arr[$i]=$((this_y + this_ps + 5))
+    y1_arr[$i]=$((this_y + draw_ps + extra_h + 5))
     x0_arr[$i]=$((this_left - 20))
     x1_arr[$i]=$((menu_w - left_margin))
 
     # Calculate annotation position based on alignment
-    local annot_gravity x_off y_off
+    local annot_gravity x_off y1_off y2_off=""
     if [ "$btn_align" = "center" ]; then
-        # Center-aligned within button area
       annot_gravity="center"
       local btn_center_x=$(( (this_left + menu_w - left_margin) / 2 ))
-      local btn_center_y=$(( this_y + this_ps / 2 ))
       x_off=$(( btn_center_x - center_x ))
-      y_off=$(( btn_center_y - center_y ))
+      if [ -n "$line2" ]; then
+        # Center the 2-line block vertically within the button slot
+        y1_off=$(( this_y + draw_ps / 2 - center_y ))
+        y2_off=$(( this_y + draw_ps + draw_ps / 2 - center_y ))
+      else
+        y1_off=$(( this_y + draw_ps / 2 - center_y ))
+      fi
     else
-      # Left-aligned: use West gravity so x offset is from left edge
       annot_gravity="West"
       x_off=$this_left
-      y_off=$(( this_y - center_y ))
+      y1_off=$(( this_y - center_y ))
+      if [ -n "$line2" ]; then
+        y2_off=$(( this_y + draw_ps - center_y ))
+      fi
     fi
 
     # Draw on background
-    run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg${i}.log" \
-      convert "${pfx}_bg.png" \
-        -gravity "$annot_gravity" -fill "$this_color" -font "$FONT" -pointsize "$this_ps" \
-        -annotate +${x_off}+${y_off} "$text" \
-        "${pfx}_bg_tmp.png" && mv "${pfx}_bg_tmp.png" "${pfx}_bg.png"
+    if [ -n "$line2" ]; then
+      run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg${i}.log" \
+        convert "${pfx}_bg.png" \
+          -gravity "$annot_gravity" -fill "$this_color" -font "$FONT" -pointsize "$draw_ps" \
+          -annotate +${x_off}+${y1_off} "$line1" \
+          -annotate +${x_off}+${y2_off} "$line2" \
+          "${pfx}_bg_tmp.png" && mv "${pfx}_bg_tmp.png" "${pfx}_bg.png"
+    else
+      run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg${i}.log" \
+        convert "${pfx}_bg.png" \
+          -gravity "$annot_gravity" -fill "$this_color" -font "$FONT" -pointsize "$draw_ps" \
+          -annotate +${x_off}+${y1_off} "$line1" \
+          "${pfx}_bg_tmp.png" && mv "${pfx}_bg_tmp.png" "${pfx}_bg.png"
+    fi
 
     # Draw on highlight overlay (red fill + blue stroke for spumux 3-color mask)
-    run_logged "$LOG_DIR/$(basename "$pfx")_convert_hl${i}.log" \
-      convert "${pfx}_hl.png" +antialias \
-        -gravity "$annot_gravity" -fill red -stroke blue -strokewidth 1 -font "$FONT" -pointsize "$this_ps" \
-        -annotate +${x_off}+${y_off} "$text" \
-        -colors 3 \
-        "${pfx}_hl_tmp.png" && mv "${pfx}_hl_tmp.png" "${pfx}_hl.png"
+    if [ -n "$line2" ]; then
+      run_logged "$LOG_DIR/$(basename "$pfx")_convert_hl${i}.log" \
+        convert "${pfx}_hl.png" +antialias \
+          -gravity "$annot_gravity" -fill red -stroke blue -strokewidth 1 -font "$FONT" -pointsize "$draw_ps" \
+          -annotate +${x_off}+${y1_off} "$line1" \
+          -annotate +${x_off}+${y2_off} "$line2" \
+          -colors 3 \
+          "${pfx}_hl_tmp.png" && mv "${pfx}_hl_tmp.png" "${pfx}_hl.png"
+    else
+      run_logged "$LOG_DIR/$(basename "$pfx")_convert_hl${i}.log" \
+        convert "${pfx}_hl.png" +antialias \
+          -gravity "$annot_gravity" -fill red -stroke blue -strokewidth 1 -font "$FONT" -pointsize "$draw_ps" \
+          -annotate +${x_off}+${y1_off} "$line1" \
+          -colors 3 \
+          "${pfx}_hl_tmp.png" && mv "${pfx}_hl_tmp.png" "${pfx}_hl.png"
+    fi
   done
 
   # ---- Generate blank menu video ----
