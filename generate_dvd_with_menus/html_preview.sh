@@ -821,7 +821,7 @@ HTMLEOF
       echo "        <button class='btn' data-target='ts${ts_idx}_movie' data-subs='off'>No subtitles</button>" >> "$html_file"
 
       if [ "$ts_idx" -gt 1 ] && [ "$has_extras" -eq 1 ]; then
-        echo "        <button class='btn' data-target='vmgm_extras'>Back to Extras</button>" >> "$html_file"
+        echo "        <button class='btn' data-target='vmgm_extras'>Back to extras</button>" >> "$html_file"
       fi
 
       echo "        <button class='btn' data-target='vmgm'>Main Menu</button>" >> "$html_file"
