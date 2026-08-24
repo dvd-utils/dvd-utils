@@ -273,16 +273,18 @@ for f in "${VIDEO_FILES[@]}"; do
   extra_input=()
   map_args=()
   audio_args=()
+  shortest_args=()
 
   echo "  -> Encoding to 720x${TARGET_H} ${FORMAT^^} MPEG-2 / AC-3 for DVD authoring..."
   if [ "$has_audio" = "audio" ]; then
-    map_args=(-map 0:v:0 -map 0:a:0)
-    audio_args=(-c:a ac3 -ar 48000 -ac "$AUDIO_CHANNELS" -b:a "$AUDIO_BITRATE")
+      map_args=(-map 0:v:0 -map 0:a:0)
+      audio_args=(-c:a ac3 -ar 48000 -ac "$AUDIO_CHANNELS" -b:a "$AUDIO_BITRATE")
   else
-    echo "  -> WARNING: no audio stream detected; using silent stereo track." >&2
-    extra_input=(-f lavfi -i "anullsrc=r=48000:cl=stereo")
-    map_args=(-map 0:v:0 -map 1:a:0)
-    audio_args=(-c:a ac3 -ar 48000 -ac "$AUDIO_CHANNELS" -b:a "$AUDIO_BITRATE")
+      echo "  -> WARNING: no audio stream detected; using silent stereo track." >&2
+      extra_input=(-f lavfi -i "anullsrc=r=48000:cl=stereo")
+      map_args=(-map 0:v:0 -map 1:a:0)
+      audio_args=(-c:a ac3 -ar 48000 -ac "$AUDIO_CHANNELS" -b:a "$AUDIO_BITRATE")
+      shortest_args=(-shortest)
   fi
 
   # -map 0:v:0 / 0:a:0 : explicitly pick the first video/audio stream so
@@ -301,6 +303,7 @@ for f in "${VIDEO_FILES[@]}"; do
       -r "$FPS" -pix_fmt yuv420p -c:v mpeg2video -g "$GOP_SIZE" -bf 2 \
       -b:v "$VIDEO_BITRATE" -maxrate "$VIDEO_MAXRATE" -bufsize "$VIDEO_BUFSIZE" \
       "${audio_args[@]}" \
+      "${shortest_args[@]}" \
       -f dvd \
       "$out_video"; then
     echo "  -> ERROR: ffmpeg failed for '$f'. Skipping to next file." >&2
