@@ -100,7 +100,7 @@ source "$SCRIPT_DIR/utils.sh"
 source "$SCRIPT_DIR/subtitles.sh"
 source "$SCRIPT_DIR/html_preview.sh"
 source "$SCRIPT_DIR/detect_dvd_format.sh"
-
+source "$SCRIPT_DIR/dvd_xml.sh"
 need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing required tool: $1" >&2; exit 1; }; }
 
 # ----------------------------- TOOL CHECKS ----------------------------------
@@ -741,98 +741,6 @@ build_menu() {
   fi
 }
 
-# ---------------------------------------------------------------------------
-# CORE LOGIC GLOBALS
-# ---------------------------------------------------------------------------
-XML_TITLESETS=""
-VMGM_LABELS=()
-VMGM_TARGETS=()
-
-CURRENT_SUB_LABELS=()
-CURRENT_HAS_SUBS=0
-CURRENT_MUXED_MPG=""
-CURRENT_DEFAULT_SUBP=62 # 62 = off (DVD convention)
-CURRENT_INPUT_FILES=()
-CURRENT_DATA_FILES=()
-
-# ---------------------------------------------------------------------------
-# HELPER: Generate XML chunk for a single Titleset
-# ---------------------------------------------------------------------------
-append_titleset_xml() {
-  local ts_idx="$1"
-  local title_pretty="$2"
-
-  # Snapshot the globals set by [discover_subs]/[mux_subs] for this titleset, since build_menu() below will call other helpers that could otherwise clobber CURRENT_* before we're done using them.
-  local has_subs="$CURRENT_HAS_SUBS"
-  local muxed_mpg="$CURRENT_MUXED_MPG"
-  local default_subp="$CURRENT_DEFAULT_SUBP"
-  local sub_labels=("${CURRENT_SUB_LABELS[@]}")
-
-  XML_TITLESETS+="  <titleset>\n"
-
-  if [ "$has_subs" -eq 1 ]; then
-    local menu_mpg="$WORK_DIR/ts${ts_idx}_menu.mpg"
-    # Build labels: subtitle options + navigation buttons
-    local labels=("${sub_labels[@]}" "No subtitles")
-    # Add "Back to Extras" for extra titlesets (ts_idx > 1 means it's an extra)
-    if [ "$ts_idx" -gt 1 ]; then
-      labels+=("Back to Extras")
-    fi
-    labels+=("Main Menu")
-
-    local menu_title="Subtitles: ${title_pretty}"
-    [ "$ts_idx" -eq 1 ] && menu_title="Movie Subtitles"
-
-    build_menu "$menu_mpg" "$menu_title" "${labels[@]}"
-
-    XML_TITLESETS+="    <menus lang=\"en\">\n      <video format=\"${DETECTED_FORMAT}\" resolution=\"${WIDTH}x${HEIGHT}\" />\n"
-    # pause="inf" on <vob> holds the still-frame indefinitely. This prevents the cell from looping after MENU_SECONDS, which was causing the DVD VM to reset the button highlight state (visual selection lost).
-    XML_TITLESETS+="      <pgc entry=\"root,subtitle\">\n        <vob file=\"$menu_mpg\" pause=\"inf\" />\n"
-    local btn_idx=0
-    for i in "${!sub_labels[@]}"; do
-      local val=$((64 + i))
-      # Set g2 = 1 so the title knows we explicitly chose this subtitle
-      XML_TITLESETS+="        <button name=\"b$btn_idx\"> { subtitle = $val; g2 = 1; if (g1 eq 1) resume; else jump titleset $ts_idx title 1; } </button>\n"
-      btn_idx=$((btn_idx+1))
-    done
-
-    # Set g2 = 1 for "No subtitles" as well
-    XML_TITLESETS+="        <button name=\"b$btn_idx\"> { subtitle = 62; g2 = 1; if (g1 eq 1) resume; else jump titleset $ts_idx title 1; } </button>\n"
-    btn_idx=$((btn_idx+1))
-
-    # "Back to Extras" button (only for extras, ts_idx > 1) which jumps to PGC 2 in the VMGM, which is the Extras Menu.
-    if [ "$ts_idx" -gt 1 ]; then
-      XML_TITLESETS+="        <button name=\"b$btn_idx\"> { g1 = 0; g2 = 0; jump vmgm menu 2; } </button>\n"
-      btn_idx=$((btn_idx+1))
-    fi
-
-    XML_TITLESETS+="        <button name=\"b$btn_idx\"> { g1 = 0; g2 = 0; jump vmgm menu entry title; } </button>\n"
-
-    # Explicitly specify the titleset index for the jump
-    XML_TITLESETS+="        <post> { if (g1 eq 1) resume; else jump titleset $ts_idx title 1; } </post>\n"
-    XML_TITLESETS+="      </pgc>\n    </menus>\n"
-  fi
-
-  XML_TITLESETS+="    <titles>\n      <video format=\"${DETECTED_FORMAT}\" resolution=\"${WIDTH}x${HEIGHT}\" />\n"
-  if [ "$has_subs" -eq 1 ]; then
-    for i in "${!sub_labels[@]}"; do
-      XML_TITLESETS+="      <subpicture />\n"
-    done
-  fi
-
-  # dvdauthor throws "Unknown entry 'title'" if entry attribute is set inside <titles>. Removed `entry="title"`.
-  XML_TITLESETS+="      <pgc>\n"
-  if [ "$has_subs" -eq 1 ]; then
-    # Only apply default subtitle if g2 eq 0 (meaning we didn't come from the subtitle menu)
-    XML_TITLESETS+="        <pre> { if (g2 eq 0) { subtitle = ${default_subp}; } g1 = 1; g2 = 0; } </pre>\n"
-  else
-    XML_TITLESETS+="        <pre> { g1 = 1; g2 = 0; } </pre>\n"
-  fi
-  XML_TITLESETS+="        <vob file=\"$muxed_mpg\" chapters=\"0\" />\n"
-  XML_TITLESETS+="        <post> { g1 = 0; call vmgm menu; } </post>\n"
-  XML_TITLESETS+="      </pgc>\n    </titles>\n"
-  XML_TITLESETS+="  </titleset>\n\n"
-}
 
 # ===========================================================================
 # ANALYSIS (ffprobe + filesystem scans only; no bdsup2sub, no spumux, no ffmpeg encoding, no dvdauthor)
@@ -1116,58 +1024,3 @@ if [ ${#EXTRAS_MENU_LABELS[@]} -gt 0 ]; then
     EXTRAS_VMGM_PGCS+=("$pgc_xml")
   done
 fi
-
-# ---------------------------------------------------------------------------
-# Assemble dvdauthor.xml
-# ---------------------------------------------------------------------------
-XML_FILE="$WORK_DIR/dvdauthor.xml"
-printf '<?xml version="1.0"?>\n' > "$XML_FILE"
-printf '<dvdauthor dest="%s" jumppad="yes">\n\n' "$OUT_DIR" >> "$XML_FILE"
-
-printf '  <vmgm>\n' >> "$XML_FILE"
-# Set g2=0 in FPC as well
-printf '    <fpc>\n      { g1 = 0; g2 = 0; subtitle = %d; %s }\n    </fpc>\n' "$MAIN_DEFAULT_SUBP" "$FPC_JUMP" >> "$XML_FILE"
-printf '    <menus>\n      <video format="%s" resolution="%sx%s" />\n' "$DETECTED_FORMAT" "$WIDTH" "$HEIGHT" >> "$XML_FILE"
-
-# pause="inf" on <vob> for all menu PGCs ensures that the still-frame holds indefinitely and prevents the cell from looping, which was causing the button highlight (visual selection) to be reset after MENU_SECONDS elapsed.
-# PGC 1: Main Menu
-printf '      <pgc entry="title">\n' >> "$XML_FILE"
-printf '        <vob file="%s" pause="inf" />\n' "$VMGM_MPG" >> "$XML_FILE"
-for i in "${!VMGM_TARGETS[@]}"; do
-  printf '        <button name="b%i"> { %s } </button>\n' "$i" "${VMGM_TARGETS[$i]}" >> "$XML_FILE"
-done
-printf '      </pgc>\n' >> "$XML_FILE"
-
-# PGC 2..N: Extras Pages
-for pgc_block in "${EXTRAS_VMGM_PGCS[@]}"; do
-  printf '%b' "$pgc_block" >> "$XML_FILE"
-done
-
-printf '    </menus>\n' >> "$XML_FILE"
-printf '  </vmgm>\n\n' >> "$XML_FILE"
-
-printf '%b' "$XML_TITLESETS" >> "$XML_FILE"
-printf '</dvdauthor>\n' >> "$XML_FILE"
-
-echo "Generated dvdauthor XML structure: $XML_FILE"
-# ---------------------------------------------------------------------------
-# AUTHOR DVD
-# ---------------------------------------------------------------------------
-echo "Clearing output directory: $OUT_DIR"
-rm -rf "$OUT_DIR"
-echo "Authoring DVD (this may take a moment)..."
-run_logged "$LOG_DIR/dvdauthor.log" dvdauthor -x "$XML_FILE"
-
-OUT_DIR_ABS="$(cd "$OUT_DIR" && pwd)"
-
-# Normalize current folder name: lowercase, replace spaces/special chars with underscores
-CURRENT_FOLDER_NAME="$(basename "$(pwd)")"
-NORMALIZED_NAME="$(echo "$CURRENT_FOLDER_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/_/g' | sed -E 's/^_+|(_)+$//g')"
-ISO_PATH="/tmp/${NORMALIZED_NAME}.iso"
-
-echo "============================================================="
-echo " DVD BUILD COMPLETE"
-echo " Structure: $OUT_DIR_ABS"
-echo " Preview:   vlc \"dvd://${OUT_DIR_ABS}\""
-echo " Generate .iso: genisoimage -dvd-video -o \"$ISO_PATH\" \"$OUT_DIR_ABS\""
-echo "============================================================="
