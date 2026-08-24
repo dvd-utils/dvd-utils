@@ -357,7 +357,28 @@ extract_subtitle_frames() {
   rm -f "$json_file"
   return 1
 }
+# ---------------------------------------------------------------------------
+# HELPER: Validate (and repair) a subtitle overlay JSON file. Returns 0 when
+# $1 is usable. Repairs the "start": 0,000 corruption a non-C-locale awk
+# produces; discards anything that still fails to parse.
+# Safe to sed: an unescaped "start": / "end": / "x": / "y": / "w": sequence
+# cannot occur inside a JSON string value, so subtitle text is never touched.
+# ---------------------------------------------------------------------------
+subs_json_ensure() {
+  local f="$1"
+  [ -s "$f" ] || return 1
+  grep -q '"start"' "$f" 2>/dev/null || return 1
 
+  if grep -qE '"(start|end|x|y|w)": -?[0-9]+,' "$f"; then
+    echo "  -> Repairing locale-corrupted subtitle data in $(basename "$f")" >&2
+    sed -i -E 's/("(start|end|x|y|w)": -?[0-9]+),([0-9]+)/\1.\3/g' "$f"
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -m json.tool "$f" >/dev/null 2>&1 || { rm -f "$f"; return 1; }
+  fi
+  return 0
+}
 # ---------------------------------------------------------------------------
 # HELPER: Generate (and cache) a muted H.264 proxy clip + poster frame +
 # subtitle overlay JSON. Subtitles are NOT burned in; they are overlaid live
@@ -456,17 +477,17 @@ generate_preview_clip() {
   # Subtitle overlay extraction
   if [ "$has_subs" -eq 1 ]; then
     if [ -n "$sub_file" ] && [ -f "$sub_file" ]; then
-      if [ -s "$sub_dir/subs.json" ] && grep -q '"start"' "$sub_dir/subs.json" 2>/dev/null; then
+      if subs_json_ensure "$sub_dir/subs.json"; then
         sub_json="$sub_dir/subs.json"
       else
         echo "  -> Extracting subtitle overlay for ts${ts_idx} from $(basename "$sub_file")..." >&2
         sub_json=$(extract_subtitle_frames "$sub_file" "$sub_dir" "$start" "$PREVIEW_CLIP_SECONDS" "$ts_idx" || true)
-        if [ -n "$sub_json" ] && [ -s "$sub_json" ]; then
+        if [ -n "$sub_json" ] && [ -s "$sub_json" ] && subs_json_ensure "$sub_json"; then
           local cnt
           cnt=$(num_or "$(grep -c '"start"' "$sub_json" 2>/dev/null || true)" 0)
           echo "  -> ts${ts_idx}: ${cnt} subtitle(s) fall inside the preview window" >&2
         else
-          echo "  -> Warning: subtitle extraction failed for ts${ts_idx}; preview plays without subs" >&2
+          echo "  -> Warning: subtitle extraction produced invalid data for ts${ts_idx}; preview plays without subs" >&2
           sub_json=""
         fi
       fi
@@ -836,13 +857,21 @@ HTMLEOF
   # ================================================================
   {
     echo '<script>'
-    echo '  // Subtitle overlay data per titleset (bitmap PNGs and/or SRT text)'
-    echo '  const subtitleData = {'
+    echo '  // Subtitle overlay data per titleset (bitmap PNGs and/or SRT text). Parsed per-title with try/catch so one corrupt file cannot abort the whole script (which leaves the let-declarations in TDZ).'
+    echo '  const subtitleData = {};'
+    echo '  function loadSubs(key, raw) {'
+    echo '    try { subtitleData[key] = JSON.parse(raw); }'
+    echo '    catch (e) {'
+    echo '      console.warn("subtitle overlay data for " + key + " failed to parse: " + e.message);'
+    echo '      subtitleData[key] = [];'
+    echo '    }'
+    echo '  }'
     for i in "${!ANALYSIS_TITLES[@]}"; do
       ts_idx=$((i + 1))
       if [ -n "${SUB_JSON[$i]:-}" ] && [ -s "${SUB_JSON[$i]}" ]; then
-        # JSON-encode the file's bytes so any stray comma/quote becomes a string token and JSON.parse turns it into a real JS array.
-        printf '    ts%d: JSON.parse(%s),\n' "$ts_idx" "$(python3 -c 'import json,sys; print(json.dumps(open(sys.argv[1]).read()))' "${SUB_JSON[$i]}" 2>/dev/null || echo '""')"
+        local encoded
+        encoded=$(python3 -c 'import json,sys; print(json.dumps(open(sys.argv[1], encoding="utf-8", errors="replace").read()))' "${SUB_JSON[$i]}" 2>/dev/null || printf '"[]"')
+        printf '  loadSubs("ts%d", %s);\n' "$ts_idx" "$encoded"
       fi
     done
     echo '  };'
