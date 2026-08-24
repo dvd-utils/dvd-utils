@@ -25,7 +25,7 @@ MAX_POINT_SIZE=36
 ASSUME_YES=false                       # to handle non-interactive runs
 MENU_BG=""                             # Background: image path, video path, or hex color (e.g. "#1a1a2e")
 MENU_BG_TIME=""                        # Timestamp for auto-still extraction (e.g. "00:05:30"); empty = random
-EXTRAS_PER_PAGE=6                      # Max extras per paginated menu page
+EXTRAS_PER_PAGE=5                      # Max extras per paginated menu page
 # ----------------------------- CLI ARGS ------------------------------------
 INPUT_DIR="."
 
