@@ -68,26 +68,25 @@ convert_time_to_seconds() {
   if [[ "$tc" =~ ^([0-9]{1,2}):([0-9]{2}):([0-9]{2})[\.:,]([0-9]{1,3})$ ]]; then
     local h="${BASH_REMATCH[1]}" m="${BASH_REMATCH[2]}" s="${BASH_REMATCH[3]}" ms="${BASH_REMATCH[4]}"
     while [ ${#ms} -lt 3 ]; do ms="${ms}0"; done
-    awk "BEGIN { printf \"%.3f\", $h * 3600 + $m * 60 + $s + $ms / 1000 }"
+    LC_ALL=C awk "BEGIN { printf \"%.3f\", $h * 3600 + $m * 60 + $s + $ms / 1000 }"
     return
   fi
   if [[ "$tc" =~ ^([0-9]{1,2}):([0-9]{2}):([0-9]{2})$ ]]; then
-    awk "BEGIN { printf \"%.3f\", ${BASH_REMATCH[1]} * 3600 + ${BASH_REMATCH[2]} * 60 + ${BASH_REMATCH[3]} }"
+    LC_ALL=C awk "BEGIN { printf \"%.3f\", ${BASH_REMATCH[1]} * 3600 + ${BASH_REMATCH[2]} * 60 + ${BASH_REMATCH[3]} }"
     return
   fi
   if [[ "$tc" =~ ^([0-9]{1,2}):([0-9]{2})[\.:,]([0-9]{1,3})$ ]]; then
     local ms="${BASH_REMATCH[3]}"
     while [ ${#ms} -lt 3 ]; do ms="${ms}0"; done
-    awk "BEGIN { printf \"%.3f\", ${BASH_REMATCH[1]} * 60 + ${BASH_REMATCH[2]} + $ms / 1000 }"
+    LC_ALL=C awk "BEGIN { printf \"%.3f\", ${BASH_REMATCH[1]} * 60 + ${BASH_REMATCH[2]} + $ms / 1000 }"
     return
   fi
   if [[ "$tc" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-    awk "BEGIN { printf \"%.3f\", $tc }"
+    LC_ALL=C awk "BEGIN { printf \"%.3f\", $tc }"
     return
   fi
   echo "0"
 }
-
 # ---------------------------------------------------------------------------
 # HELPER: First subtitle timestamp (seconds) in a sub file, for aligning the
 # preview window. Echoes seconds or fails.
@@ -181,7 +180,7 @@ find_subtitle_for_preview() {
 srt_to_json() {
   local srt="$1" json_out="$2" cstart="$3" cdur="$4"
 
-  awk -v cstart="$cstart" -v cdur="$cdur" '
+  LC_ALL=C awk -v cstart="$cstart" -v cdur="$cdur" '
     function tc_to_sec(tc,   a) {
       split(tc, a, ":")
       gsub(/,/, ".", a[3])
@@ -304,7 +303,7 @@ extract_subtitle_frames() {
   img_dir=$(rel_path "$sub_dir")
 
   # BDN XML -> overlay JSON (InTC/OutTC timing, Graphic X/Y/Width placement)
-  awk -v dir="$img_dir" -v fps="$FPS" -v sw="$src_w" -v sh="$src_h" \
+  LC_ALL=C awk -v dir="$img_dir" -v fps="$FPS" -v sw="$src_w" -v sh="$src_h" \
       -v cstart="$clip_start" -v cdur="$clip_dur" '
     function tc_to_sec(tc,   t, hh, mm, ss, ff, ms) {
       split(tc, t, ":")
@@ -351,7 +350,6 @@ extract_subtitle_frames() {
     }
     END { print (n > 0 ? "\n  " : "") "]" }
   ' "$bdn_xml" > "$json_file"
-
   if grep -q '"start"' "$json_file" 2>/dev/null; then
     echo "$json_file"
     return 0
@@ -416,10 +414,10 @@ generate_preview_clip() {
     first_sub=$(num_or "$first_sub" "")
     if [ -n "$first_sub" ]; then
       local move
-      move=$(num_or "$(awk "BEGIN { print ($first_sub >= $start + $PREVIEW_CLIP_SECONDS) ? 1 : 0 }" 2>/dev/null || true)" 0)
+      move=$(num_or "$(LC_ALL=C awk "BEGIN { print ($first_sub >= $start + $PREVIEW_CLIP_SECONDS) ? 1 : 0 }" 2>/dev/null || true)" 0)
       if [ "$move" -eq 1 ]; then
         local newstart
-        newstart=$(num_or "$(awk "BEGIN { printf \"%d\", ($first_sub > 2 ? $first_sub - 2 : 0) }" 2>/dev/null || true)" "$start")
+        newstart=$(num_or "$(LC_ALL=C awk "BEGIN { printf \"%d\", ($first_sub > 2 ? $first_sub - 2 : 0) }" 2>/dev/null || true)" "$start")
         if [ "$dur" -eq 0 ] || [ "$newstart" -lt "$dur" ]; then
           echo "  -> Aligning ts${ts_idx} preview window with first subtitle (~${newstart}s)" >&2
           start="$newstart"
@@ -843,7 +841,8 @@ HTMLEOF
     for i in "${!ANALYSIS_TITLES[@]}"; do
       ts_idx=$((i + 1))
       if [ -n "${SUB_JSON[$i]:-}" ] && [ -s "${SUB_JSON[$i]}" ]; then
-        printf '    ts%d: %s,\n' "$ts_idx" "$(cat "${SUB_JSON[$i]}")"
+        # JSON-encode the file's bytes so any stray comma/quote becomes a string token and JSON.parse turns it into a real JS array.
+        printf '    ts%d: JSON.parse(%s),\n' "$ts_idx" "$(python3 -c 'import json,sys; print(json.dumps(open(sys.argv[1]).read()))' "${SUB_JSON[$i]}" 2>/dev/null || echo '""')"
       fi
     done
     echo '  };'
