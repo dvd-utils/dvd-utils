@@ -874,7 +874,6 @@ HTMLEOF
         printf '  loadSubs("ts%d", %s);\n' "$ts_idx" "$encoded"
       fi
     done
-    echo '  };'
     cat <<'JSEOF'
 
   // ---- VM state ----
