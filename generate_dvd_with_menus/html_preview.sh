@@ -359,10 +359,11 @@ extract_subtitle_frames() {
 }
 # ---------------------------------------------------------------------------
 # HELPER: Validate (and repair) a subtitle overlay JSON file. Returns 0 when
-# $1 is usable. Repairs the "start": 0,000 corruption a non-C-locale awk
-# produces; discards anything that still fails to parse.
-# Safe to sed: an unescaped "start": / "end": / "x": / "y": / "w": sequence
-# cannot occur inside a JSON string value, so subtitle text is never touched.
+# $1 is usable. Repairs the comma-decimal corruption ("start": 0,000) a
+# non-C-locale awk produces, then validates with jq; unrecoverable files are
+# deleted so the caller regenerates them.
+# Safe to sed: an unescaped "start": / "end": ... sequence cannot occur
+# inside a JSON string value (awk escapes every quote in text).
 # ---------------------------------------------------------------------------
 subs_json_ensure() {
   local f="$1"
@@ -374,10 +375,30 @@ subs_json_ensure() {
     sed -i -E 's/("(start|end|x|y|w)": -?[0-9]+),([0-9]+)/\1.\3/g' "$f"
   fi
 
-  if command -v python3 >/dev/null 2>&1; then
-    python3 -m json.tool "$f" >/dev/null 2>&1 || { rm -f "$f"; return 1; }
+  if command -v jq >/dev/null 2>&1; then
+    if ! jq -e . "$f" >/dev/null 2>&1; then
+      echo "  -> Warning: $(basename "$f") is not valid JSON; regenerating" >&2
+      rm -f "$f"
+      return 1
+    fi
   fi
   return 0
+}
+# ---------------------------------------------------------------------------
+# HELPER: Encode a file's contents as a JSON string literal — pure bash.
+# Covers everything the awk generators emit (backslash, quote, newline, CR,
+# TAB). Always succeeds; emits "[]" for missing/empty/unreadable input.
+# ---------------------------------------------------------------------------
+json_string_encode_file() {
+  local f="$1" s
+  if [ ! -s "$f" ]; then printf '"[]"'; return 0; fi
+  s=$(<"$f") || { printf '"[]"'; return 0; }
+  s="${s//\\/\\\\}"     # backslash first!
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  printf '"%s"' "$s"
 }
 # ---------------------------------------------------------------------------
 # HELPER: Generate (and cache) a muted H.264 proxy clip + poster frame +
@@ -857,7 +878,7 @@ HTMLEOF
   # ================================================================
   {
     echo '<script>'
-    echo '  // Subtitle overlay data per titleset (bitmap PNGs and/or SRT text). Parsed per-title with try/catch so one corrupt file cannot abort the whole script (which leaves the let-declarations in TDZ).'
+    echo '  // Subtitle overlay data per titleset (bitmap PNGs and/or SRT text). Decoded per-title inside try/catch: one corrupt file must never abort the whole script (a top-level throw leaves every let below in its temporal dead zone: ReferenceErrors).'
     echo '  const subtitleData = {};'
     echo '  function loadSubs(key, raw) {'
     echo '    try { subtitleData[key] = JSON.parse(raw); }'
@@ -870,7 +891,13 @@ HTMLEOF
       ts_idx=$((i + 1))
       if [ -n "${SUB_JSON[$i]:-}" ] && [ -s "${SUB_JSON[$i]}" ]; then
         local encoded
-        encoded=$(python3 -c 'import json,sys; print(json.dumps(open(sys.argv[1], encoding="utf-8", errors="replace").read()))' "${SUB_JSON[$i]}" 2>/dev/null || printf '"[]"')
+        # jq: read the whole file as one raw string (-R -s) and print it as a JSON string literal; -a keeps the payload pure ASCII (defuses U+2028/2029, which are legal JSON but hostile in JS string literals).
+        encoded=$(jq -aRs . "${SUB_JSON[$i]}" 2>/dev/null || true)
+        # Fallback if jq is missing or rejects the file
+        [ -n "$encoded" ] || encoded=$(json_string_encode_file "${SUB_JSON[$i]}")
+        encoded="${encoded:-\"[]\"}"
+        # HTML safety: a literal "</script>" inside subtitle text would terminate this <script> block early — no raw '<' may survive.
+        encoded="${encoded//</\\u003c}"
         printf '  loadSubs("ts%d", %s);\n' "$ts_idx" "$encoded"
       fi
     done
