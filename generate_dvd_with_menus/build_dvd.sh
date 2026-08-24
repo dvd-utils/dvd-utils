@@ -21,7 +21,7 @@ DEFAULT_HINT="nl"                      # Substring for default lang (e.g. "nl" o
 MENU_SECONDS=8                         # Loop duration for static menus
 MIN_POINT_SIZE=14                      # Never shrink menu text below this
 MAX_POINT_SIZE=36
-
+ASSUME_YES=false # to handle non-interactive runs
 # ----------------------------- CLI ARGS ------------------------------------
 # Defaults come from the CONFIG block above; CLI flags override them here.
 INPUT_DIR="."
@@ -57,6 +57,7 @@ while [ $# -gt 0 ]; do
     -w|--work)    WORK_DIR="$2";     shift 2 ;;
     -d|--default) DEFAULT_HINT="$2"; shift 2 ;;
     -h|--help)    print_help; exit 0 ;;
+    -y|--yes)     ASSUME_YES=true; shift 1 ;;
     --) shift; break ;;
     *) echo "Unknown option: $1" >&2; print_help; exit 1 ;;
   esac
@@ -520,11 +521,15 @@ generate_html_preview
 
 echo ""
 echo "============================================================="
-read -r -p "Analysis complete. Proceed with encoding and DVD authoring? [Y/n] " CONFIRM_REPLY
-case "${CONFIRM_REPLY,,}" in
-  ""|y|yes) ;;
-  *) echo "Aborted." >&2; exit 1 ;;
-esac
+if [ "$ASSUME_YES" = true ] || [ ! -t 0 ]; then
+  echo "Non-interactive session detected. Proceeding automatically..."
+else
+  read -r -p "Analysis complete. Proceed with encoding and DVD authoring? [Y/n] " CONFIRM_REPLY
+  case "${CONFIRM_REPLY,,}" in
+    ""|y|yes) ;;
+    *) echo "Aborted." >&2; exit 1 ;;
+  esac
+fi
 echo "============================================================="
 echo ""
 
