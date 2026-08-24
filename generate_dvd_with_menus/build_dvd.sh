@@ -3,27 +3,30 @@
 #  build_dvd.sh — dynamic DVD builder (Movie + Extras)
 # ============================================================================
 #  What it does:
-#   1. Scans MAIN_MOVIE and EXTRAS_DIR for .mpg files.
+#   1. Scans MAIN_MOVIE and EXTRAS_DIR for .mpg files (extras support subfolder pagination: extras/{Category}/file.mpg).
 #   2. Detects PAL/NTSC + resolution from the main movie's own stream data (frame rate + frame size) and authors the whole disc to match.
-#   3. For every video, looks for matching subtitle .idx/.sub, .sub.idx, or .sup files, recognizing patterns like _track{n}_{lang}, _track{n}_{lang}_exp, etc.
-#   4. Normalizes language names and selects default subtitles based on config (e.g., Dutch) falling back to 'track0' if no config match is found.
+#   3. For every video, looks for matching subtitle .idx/.sub, .sub.idx, .sup, or .srt files, recognizing patterns like _track{n}_{lang}, _track{n}_{lang}_exp, etc.
+#   4. Normalizes language names and selects default subtitles based on config (e.g. Dutch) falling back to 'track0' if no config match.
 #   5. Dynamic VMGM menu & per-titleset subtitle menus.
 #   6. Builds dvdauthor.xml structure and compiles the final DVD.
+#   7. Optional menu background: explicit image/video, hex solid color, or auto-generated still from the main movie at a random (or specified) timestamp.
 # ============================================================================
 set -euo pipefail
 
 # ----------------------------- CONFIG ---------------------------------------
 MAIN_MOVIE=""      # Pre-encoded MPEG2 main feature, like './Movie Name_pal.mpg' or falls back to first .mpg in root
-EXTRAS_DIR="./extras"                  # Folder optionally containing extra .mpg files
+EXTRAS_DIR="./extras"                  # Folder optionally containing extra .mpg files (may have subfolders)
 WORK_DIR="./work"                      # Scratch space, safe to delete after success
 OUT_DIR="./dvd"                        # Final DVD-Video output structure
 DEFAULT_HINT="nl"                      # Substring for default lang (e.g. "nl" or "dutch")
 MENU_SECONDS=8                         # Loop duration for static menus
 MIN_POINT_SIZE=14                      # Never shrink menu text below this
 MAX_POINT_SIZE=36
-ASSUME_YES=false # to handle non-interactive runs
+ASSUME_YES=false                       # to handle non-interactive runs
+MENU_BG=""                             # Background: image path, video path, or hex color (e.g. "#1a1a2e")
+MENU_BG_TIME=""                        # Timestamp for auto-still extraction (e.g. "00:05:30"); empty = random
+EXTRAS_PER_PAGE=10                     # Max extras per paginated menu page
 # ----------------------------- CLI ARGS ------------------------------------
-# Defaults come from the CONFIG block above; CLI flags override them here.
 INPUT_DIR="."
 
 print_help() {
@@ -33,31 +36,43 @@ Usage: $0 [OPTIONS]
 Build a DVD-Video from a main movie .mpg plus optional extras.
 
 Options:
-  -i, --input  DIR      Directory to scan for the main movie .mpg (default: .)
-  -e, --extras DIR      Directory containing extra .mpg files (default: ./extras)
-  -m, --main   FILE     Explicit main movie .mpg (overrides auto-detection)
-  -o, --out    DIR      Final DVD-Video output directory (default: ./dvd)
-  -w, --work   DIR      Scratch/working directory (default: ./work)
-  -d, --default LANG    Default subtitle language hint, e.g. "nl" (default: nl)
-  -h, --help            Show this help and exit
+  -i, --input       DIR      Directory to scan for the main movie .mpg (default: .)
+  -e, --extras      DIR      Directory containing extra .mpg files (default: ./extras)
+                             Supports subfolders for pagination: extras/{Category}/file.mpg
+  -m, --main        FILE     Explicit main movie .mpg (overrides auto-detection)
+  -o, --out         DIR      Final DVD-Video output directory (default: ./dvd)
+  -w, --work        DIR      Scratch/working directory (default: ./work)
+  -d, --default     LANG     Default subtitle language hint, e.g. "nl" (default: nl)
+  --bg              SPEC     Menu background: image path, video path, or hex color (e.g. "#1a1a2e")
+                             If not set, a still is auto-extracted from the main movie.
+  --bg-time         TIME     Timestamp for still extraction when using auto background
+                             (e.g. "00:05:30"). Default: random moment.
+  --extras-per-page N        Number of extras per paginated menu page (default: 10)
+  -y, --yes                  Skip confirmation prompt
+  -h, --help                 Show this help and exit
 
 Examples:
   $0 -i ./movies -e ./movies/extras
-  $0 --input /data/movies --main "/data/movies/Movie Name_pal.mpg"
-  $0 -i . -o ./out_dvd
+  $0 --input /data/movies --main "/data/movies/Movie Name_pal.mpg" --bg "#2a1a3e"
+  $0 -i . -o ./out_dvd --bg "./background.jpg"
+  $0 -i . --bg-time "00:12:00"
+  $0 -e ./extras --extras-per-page 8
 EOF
 }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    -i|--input)   INPUT_DIR="$2";    shift 2 ;;
-    -e|--extras)  EXTRAS_DIR="$2";   shift 2 ;;
-    -m|--main)    MAIN_MOVIE="$2";   shift 2 ;;
-    -o|--out)     OUT_DIR="$2";      shift 2 ;;
-    -w|--work)    WORK_DIR="$2";     shift 2 ;;
-    -d|--default) DEFAULT_HINT="$2"; shift 2 ;;
-    -h|--help)    print_help; exit 0 ;;
-    -y|--yes)     ASSUME_YES=true; shift 1 ;;
+    -i|--input)       INPUT_DIR="$2";       shift 2 ;;
+    -e|--extras)      EXTRAS_DIR="$2";      shift 2 ;;
+    -m|--main)        MAIN_MOVIE="$2";      shift 2 ;;
+    -o|--out)         OUT_DIR="$2";         shift 2 ;;
+    -w|--work)        WORK_DIR="$2";        shift 2 ;;
+    -d|--default)     DEFAULT_HINT="$2";    shift 2 ;;
+    --bg)             MENU_BG="$2";         shift 2 ;;
+    --bg-time)        MENU_BG_TIME="$2";    shift 2 ;;
+    --extras-per-page) EXTRAS_PER_PAGE="$2"; shift 2 ;;
+    -y|--yes)         ASSUME_YES=true;      shift 1 ;;
+    -h|--help)        print_help; exit 0 ;;
     --) shift; break ;;
     *) echo "Unknown option: $1" >&2; print_help; exit 1 ;;
   esac
@@ -65,6 +80,18 @@ done
 
 # Validate INPUT_DIR early so the user gets a clean error before tool checks.
 [ -d "$INPUT_DIR" ] || { echo "ERROR: --input directory not found: $INPUT_DIR" >&2; exit 1; }
+# Validate EXTRAS_PER_PAGE
+if ! [[ "$EXTRAS_PER_PAGE" =~ ^[0-9]+$ ]] || [ "$EXTRAS_PER_PAGE" -lt 1 ] || [ "$EXTRAS_PER_PAGE" -gt 36 ]; then
+  echo "ERROR: --extras-per-page must be a number between 1 and 36." >&2; exit 1
+fi
+# Validate MENU_BG if it looks like a hex color
+if [[ -n "$MENU_BG" && "$MENU_BG" =~ ^#[0-9a-fA-F]{3,8}$ ]]; then
+  : # valid hex
+elif [ -n "$MENU_BG" ]; then
+  if [ ! -f "$MENU_BG" ]; then
+    echo "ERROR: --bg file not found: $MENU_BG" >&2; exit 1
+  fi
+fi
 # ----------------------------------------------------------------------------
 
 # Source split modules
@@ -97,21 +124,21 @@ need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing required tool: $1" >
 
 BDSUP2SUB_CMD=()
 
-# 1. Prefer the native bdsup2sub++ executable from PATH.
+# Prefer the native bdsup2sub++ executable from PATH.
 if command -v bdsup2sub++ >/dev/null 2>&1; then
   BDSUP2SUB_CMD=("$(command -v bdsup2sub++)")
 
-# 2. Look for local development/build copies of bdsup2sub++.
+# Look for local development/build copies of bdsup2sub++.
 else
   for candidate in "./VobSub-Utilities/bdsup2sub++" "./VobSub-Utilities/build/bdsup2sub++" "./sup2vobsub/bdsup2sub++" "./sup2vobsub/build/bdsup2sub++"; do
     if [ -x "$candidate" ]; then BDSUP2SUB_CMD=("$candidate"); break; fi
   done
 
-  # 3. Fall back to the original Java bdsup2sub wrapper in PATH.
+  # Fall back to the original Java bdsup2sub wrapper in PATH.
   if [ ${#BDSUP2SUB_CMD[@]} -eq 0 ] && command -v bdsup2sub >/dev/null 2>&1; then
     BDSUP2SUB_CMD=("$(command -v bdsup2sub)")
 
-  # 4. Fall back to a local bdsup2sub.jar.
+  # Fall back to a local bdsup2sub.jar.
   elif [ ${#BDSUP2SUB_CMD[@]} -eq 0 ] && command -v java >/dev/null 2>&1 && [ -f "./bdsup2sub.jar" ]; then
     BDSUP2SUB_CMD=("java" "-jar" "./bdsup2sub.jar")
   fi
@@ -145,8 +172,16 @@ echo "Using subtitle converter: ${BDSUP2SUB_CMD[*]}"
 
 for t in dvdauthor spumux ffmpeg ffprobe convert; do need "$t"; done
 
-# Define fallback fonts (sans-serif bold preferred)
-FALLBACK_FONTS=("Arial-Bold" "DejaVu-Sans-Bold" "Helvetica-Bold" "Ubuntu-Sans-Condensed-Bold" "DejaVu-Sans-Mono-Bold")
+# Define fallback fonts (prefer condensed/narrow variants for tighter menu text)
+FALLBACK_FONTS=(
+  "Ubuntu-Sans-Condensed-Bold"
+  "Arial-Narrow-Bold"
+  "DejaVu-Sans-Condensed-Bold"
+  "Arial-Bold"
+  "DejaVu-Sans-Bold"
+  "Helvetica-Bold"
+  "DejaVu-Sans-Mono-Bold"
+)
 IM_FONT=""
 for font in "${FALLBACK_FONTS[@]}"; do
     if convert -list font | grep -q "^[[:space:]]*Font: $font$"; then
@@ -155,8 +190,8 @@ for font in "${FALLBACK_FONTS[@]}"; do
     fi
 done
 if [ -z "$IM_FONT" ]; then
-    echo "ERROR: No suitable fallback font found in ImageMagick (check 'convert -list font')." >&2
-    exit 1
+  echo "ERROR: No suitable fallback font found in ImageMagick (check 'convert -list font')." >&2
+  exit 1
 fi
 FONT="$IM_FONT" # convert -list font
 
@@ -214,20 +249,148 @@ verify_matches_main_format() {
 # ---------------------------------------------------------------------------
 NORM_LANG_CODE=""
 NORM_LANG_LABEL=""
+
+# ---------------------------------------------------------------------------
+# MENU BACKGROUND HANDLING
+# ---------------------------------------------------------------------------
+# Resolves MENU_BG into a single background image at DVD resolution.
+# Sets MENU_BG_RESOLVED to the path of a PNG file (or empty if none).
+# ---------------------------------------------------------------------------
+MENU_BG_RESOLVED=""
+MENU_BG_IS_VIDEO=false
+
+resolve_menu_background() {
+  local out_png="$WORK_DIR/_menu_bg_resolved.png"
+  local out_vid="$WORK_DIR/_menu_bg_video.mpg"
+
+  # Case 1: Explicit hex color — generate solid gradient background
+  if [[ -n "$MENU_BG" && "$MENU_BG" =~ ^#[0-9a-fA-F]{3,8}$ ]]; then
+    local base_color="$MENU_BG"
+    echo "  -> Menu background: solid color $base_color"
+
+    # Parse hex to RGB for gradient generation
+    local hex="${base_color#\#}"
+    # Expand 3-char hex to 6-char
+    if [ ${#hex} -eq 3 ]; then
+      hex="${hex:0:1}${hex:0:1}${hex:1:1}${hex:1:1}${hex:2:1}${hex:2:1}"
+    fi
+    local r=$((16#${hex:0:2})) g=$((16#${hex:2:2})) b=$((16#${hex:4:2}))
+
+    # Darken for the top band of the title bar gradient
+    local dr=$(( r * 40 / 100 ))
+    local dg=$(( g * 40 / 100 ))
+    local db=$(( b * 40 / 100 ))
+
+    local menu_w=720 menu_h=576
+    [ "$DETECTED_FORMAT" = "ntsc" ] && menu_h=480
+    local title_bar_h=80
+    [ "$DETECTED_FORMAT" = "ntsc" ] && title_bar_h=65
+    local third_h=$((title_bar_h / 3))
+
+    # Build gradient title bar over the solid color
+    convert -size "${menu_w}x${menu_h}" xc:"rgb($r,$g,$b)" \
+      -fill "rgb($dr,$dg,$db)" -draw "rectangle 0,0 ${menu_w},${third_h}" \
+      -fill "rgb($((r*60/100)),$((g*60/100)),$((b*60/100)))" -draw "rectangle 0,${third_h} ${menu_w},$((third_h*2))" \
+      -fill "rgb($((r*80/100)),$((g*80/100)),$((b*80/100)))" -draw "rectangle 0,$((third_h*2)) ${menu_w},${title_bar_h}" \
+      -fill "rgb($((r*120/100 > 255 ? 255 : r*120/100)),$((g*120/100 > 255 ? 255 : g*120/100)),$((b*120/100 > 255 ? 255 : b*120/100)))" \
+        -draw "rectangle 0,${title_bar_h} ${menu_w},$((title_bar_h + 2))" \
+      "$out_png"
+    MENU_BG_RESOLVED="$out_png"
+    return
+  fi
+
+  # Case 2: Explicit image file
+  if [ -n "$MENU_BG" ] && [ -f "$MENU_BG" ]; then
+    local ext="${MENU_BG##*.}"
+    ext="$(echo "$ext" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$ext" =~ ^(mpg|mpeg|m2v|vob|mkv|mp4|avi|mov|ts)$ ]]; then
+      echo "  -> Menu background: video file $MENU_BG"
+      # Extract a still from the video at the specified or default time
+      local seek_time="$MENU_BG_TIME"
+      [ -z "$seek_time" ] && seek_time="0"
+      run_logged "$LOG_DIR/_bg_from_video.log" \
+        ffmpeg -y -ss "$seek_time" -i "$MENU_BG" -vframes 1 \
+                -vf "scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:black" \
+                -pix_fmt yuv420p "$out_png"
+      MENU_BG_RESOLVED="$out_png"
+    else
+      echo "  -> Menu background: image file $MENU_BG"
+      run_logged "$LOG_DIR/_bg_from_image.log" \
+        convert "$MENU_BG" \
+                -resize "${WIDTH}x${HEIGHT}^" -gravity center -extent "${WIDTH}x${HEIGHT}" \
+                "$out_png"
+      MENU_BG_RESOLVED="$out_png"
+    fi
+    return
+  fi
+
+  # Case 3: Auto-extract still from main movie
+  local seek_time="$MENU_BG_TIME"
+  if [ -z "$seek_time" ]; then
+    # Get duration, pick a random moment between 5% and 40% of the movie
+    local duration
+    duration="$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$MAIN_MOVIE" 2>/dev/null || echo "3600")"
+    # Trim to integer seconds
+    duration="$(echo "$duration" | grep -oE '^[0-9]+' || echo "3600")"
+    [ -z "$duration" ] && duration=3600
+    # Random between 5% and 40%
+    local min_sec=$(( duration * 5 / 100 ))
+    local max_sec=$(( duration * 40 / 100 ))
+    [ "$max_sec" -le "$min_sec" ] && max_sec=$((min_sec + 10))
+    local range=$(( max_sec - min_sec ))
+    # $RANDOM is 0-32767
+    seek_time=$(( min_sec + ( RANDOM * range / 32768 ) ))
+    echo "  -> Menu background: auto-still from main movie at ${seek_time}s (random)"
+  else
+    echo "  -> Menu background: auto-still from main movie at $seek_time"
+  fi
+
+  run_logged "$LOG_DIR/_bg_auto_still.log" \
+    ffmpeg -y -ss "$seek_time" -i "$MAIN_MOVIE" -vframes 1 \
+            -vf "scale=${WIDTH}:${HEIGHT},eq=brightness=-0.15:saturation=0.6" \
+            -pix_fmt yuv420p "$out_png"
+  MENU_BG_RESOLVED="$out_png"
+}
+
 # ---------------------------------------------------------------------------
 # HELPER: Build a dynamic menu (Graphics + Video + Spumux logic)
+# ---------------------------------------------------------------------------
+# Optional 5th+ args: pairs of  "label" "vmgm_command"  used by extras
+#   pagination to wire "Next page" / "Prev page" buttons.
+#   When extra_vmgm_pairs are provided, this menu lives in the VMGM and
+#   those button actions are appended to the label list automatically.
 # ---------------------------------------------------------------------------
 build_menu() {
   local out_mpg="$1"
   local title_text="$2"
   shift 2
-  local labels=("$@")
+  # Remaining positional args are labels, EXCEPT that if the special
+  # sentinel "--vmgm-pairs--" appears, everything after it is
+  #   "label" "vmgm_cmd" "label" "vmgm_cmd" ...
+  local labels=()
+  local vmgm_pairs=()
+  local collecting_pairs=false
+
+  for arg in "$@"; do
+    if [ "$arg" = "--vmgm-pairs--" ]; then
+      collecting_pairs=true
+      continue
+    fi
+    if [ "$collecting_pairs" = true ]; then
+      vmgm_pairs+=("$arg")
+    else
+      labels+=("$arg")
+    fi
+  done
+  local num_pairs=$(( ${#vmgm_pairs[@]} / 2 ))
+
   local num_items=${#labels[@]}
   local pfx="${out_mpg%.mpg}"
 
   [ "$num_items" -gt 0 ] || { echo "ERROR: build_menu called with zero labels for $out_mpg" >&2; exit 1; }
   # DVD spec limits to 36 buttons per PGC
-  [ "$num_items" -le 36 ] || { echo "ERROR: Too many buttons ($num_items) in menu '$title_text'. Max 36." >&2; exit 1; }
+  local total_buttons=$(( num_items + num_pairs ))
+  [ "$total_buttons" -le 36 ] || { echo "ERROR: Too many buttons ($total_buttons) in menu '$title_text'. Max 36." >&2; exit 1; }
 
   # Hardcode menu dimensions to standard DVD to avoid scaling mismatches with ffmpeg -target
   local menu_w=720
@@ -240,7 +403,7 @@ build_menu() {
   local is_subtitle_menu=false
   local is_extras_menu=false
   [[ "$title_text" == Subtitles:* ]] && is_subtitle_menu=true
-  [[ "$title_text" == "Extras Menu" ]] && is_extras_menu=true
+  [[ "$title_text" == "Extras Menu" ]] || [[ "$title_text" == "Extras"*"("*")" ]] && is_extras_menu=true
 
   # ---- Title configuration ----
   local title_line1="" title_line2=""
@@ -331,7 +494,7 @@ build_menu() {
 
   echo "  -> Building Menu: $title_text"
   echo "     Target: ${menu_w}x${menu_h} (${DETECTED_FORMAT^^})"
-  echo "     Layout: $num_items items @ ${point_size}pt (title @ ${title_size}pt)"
+  echo "     Layout: $num_items content + $num_pairs pagination = $total_buttons buttons @ ${point_size}pt (title @ ${title_size}pt)"
   [ "$is_extras_menu" = true ] && echo "     (Extras menu: reduced font)"
   echo "     Buttons:"
   for i in "${!labels[@]}"; do
@@ -340,6 +503,10 @@ build_menu() {
       [ "$i" = "$ni" ] && tag=" [NAV]" && break
     done
     printf "       %d - %s%s\n" "$i" "${labels[$i]}" "$tag"
+  done
+  for p in $(seq 0 $((num_pairs - 1))); do
+    local pidx=$(( p * 2 ))
+    printf "       %d - %s [PAGINATION]\n" "$((num_items + p))" "${vmgm_pairs[$pidx]}"
   done
   echo "+-- Muxing menu stream..."
 
@@ -359,26 +526,49 @@ build_menu() {
     fi
   fi
 
-  # ---- Build background with gradient title bar ----
-  local third_h=$((title_bar_h / 3))
-  run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg0.log" \
-    convert -size "${menu_w}x${menu_h}" xc:black \
-      -fill "#08081a" -draw "rectangle 0,0 ${menu_w},${third_h}" \
-      -fill "#12122a" -draw "rectangle 0,${third_h} ${menu_w},$((third_h * 2))" \
-      -fill "#1a1a2e" -draw "rectangle 0,$((third_h * 2)) ${menu_w},${title_bar_h}" \
-      -fill "#555577" -draw "rectangle 0,${title_bar_h} ${menu_w},$((title_bar_h + 2))" \
-      -gravity NorthWest -fill white -font "$FONT" -pointsize "$title_size" \
-      -annotate +${left_margin}+${title1_y} "$title_line1" \
-      "${pfx}_bg.png"
+  # ---- Build background ----
+  if [ -n "$MENU_BG_RESOLVED" ] && [ -f "$MENU_BG_RESOLVED" ]; then
+    # Start from the resolved background image
+    cp "$MENU_BG_RESOLVED" "${pfx}_bg.png"
+    # Darken it slightly so text remains readable, then add title bar overlay
+    local third_h=$((title_bar_h / 3))
+    run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg0.log" \
+      convert "${pfx}_bg.png" \
+        -fill "rgba(0,0,0,0.75)" -draw "rectangle 0,0 ${menu_w},${title_bar_h}" \
+        -fill "#08081a" -draw "rectangle 0,0 ${menu_w},${third_h}" \
+        -fill "#12122a" -draw "rectangle 0,${third_h} ${menu_w},$((third_h * 2))" \
+        -fill "#1a1a2e" -draw "rectangle 0,$((third_h * 2)) ${menu_w},${title_bar_h}" \
+        -fill "#555577" -draw "rectangle 0,${title_bar_h} ${menu_w},$((title_bar_h + 2))" \
+        "${pfx}_bg_tmp.png" && mv "${pfx}_bg_tmp.png" "${pfx}_bg.png"
+  else
+    # Original gradient-only background
+    local third_h=$((title_bar_h / 3))
+    run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg0.log" \
+      convert -size "${menu_w}x${menu_h}" xc:black \
+        -fill "#08081a" -draw "rectangle 0,0 ${menu_w},${third_h}" \
+        -fill "#12122a" -draw "rectangle 0,${third_h} ${menu_w},$((third_h * 2))" \
+        -fill "#1a1a2e" -draw "rectangle 0,$((third_h * 2)) ${menu_w},${title_bar_h}" \
+        -fill "#555577" -draw "rectangle 0,${title_bar_h} ${menu_w},$((title_bar_h + 2))" \
+        "${pfx}_bg.png"
+  fi
 
-  # Second title line (lighter color for visual hierarchy)
+  # Draw title text (CENTER aligned)
+  local title_gravity="center"
+  local title_x=$(( menu_w / 2 ))
+  run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg0t.log" \
+    convert "${pfx}_bg.png" \
+      -gravity "$title_gravity" -fill white -font "$FONT" -pointsize "$title_size" \
+      -annotate +0+$(( title1_y + title_size / 2 )) "$title_line1" \
+      "${pfx}_bg_tmp.png" && mv "${pfx}_bg_tmp.png" "${pfx}_bg.png"
+
+  # Second title line
   if [ -n "$title_line2" ]; then
     local line2_size=$((title_size - 4))
     [ "$line2_size" -lt "$MIN_POINT_SIZE" ] && line2_size=$MIN_POINT_SIZE
     run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg0b.log" \
       convert "${pfx}_bg.png" \
-        -gravity NorthWest -fill "#9999bb" -font "$FONT" -pointsize "$line2_size" \
-        -annotate +${left_margin}+${title2_y} "$title_line2" \
+        -gravity "$title_gravity" -fill "#9999bb" -font "$FONT" -pointsize "$line2_size" \
+        -annotate +0+$(( title2_y + line2_size / 2 )) "$title_line2" \
         "${pfx}_bg_tmp.png" && mv "${pfx}_bg_tmp.png" "${pfx}_bg.png"
   fi
 
@@ -395,7 +585,7 @@ build_menu() {
   run_logged "$LOG_DIR/$(basename "$pfx")_convert_hl0.log" \
     convert -size "${menu_w}x${menu_h}" xc:none "${pfx}_hl.png"
 
-  # ---- Draw all buttons ----
+  # ---- Draw all content + nav buttons ----
   local y0_arr=() y1_arr=() x0_arr=() x1_arr=()
   local current_y=$top_margin
   local nav_drawn=0
@@ -437,21 +627,63 @@ build_menu() {
     x0_arr[$i]=$((this_left - 20))
     x1_arr[$i]=$((menu_w - left_margin))
 
-    # Draw on background with appropriate color
+    # Draw on background with appropriate color (CENTER aligned)
+    local text_x=$(( (this_left + menu_w - left_margin) / 2 ))
     run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg${i}.log" \
       convert "${pfx}_bg.png" \
         -gravity NorthWest -fill "$this_color" -font "$FONT" -pointsize "$this_ps" \
-        -annotate +${this_left}+${this_y} "$text" \
+        -annotate +${text_x}+${this_y} "$text" \
         "${pfx}_bg_tmp.png" && mv "${pfx}_bg_tmp.png" "${pfx}_bg.png"
 
     # Draw on highlight overlay (red fill + blue stroke for spumux 3-color mask)
     run_logged "$LOG_DIR/$(basename "$pfx")_convert_hl${i}.log" \
       convert "${pfx}_hl.png" +antialias \
         -gravity NorthWest -fill red -stroke blue -strokewidth 1 -font "$FONT" -pointsize "$this_ps" \
-        -annotate +${this_left}+${this_y} "$text" \
+        -annotate +${text_x}+${this_y} "$text" \
         -colors 3 \
         "${pfx}_hl_tmp.png" && mv "${pfx}_hl_tmp.png" "${pfx}_hl.png"
   done
+
+  # ---- Draw pagination buttons (centered at bottom) ----
+  if [ "$num_pairs" -gt 0 ]; then
+    # Place pagination buttons in a row at the very bottom
+    local pag_y=$((menu_h - 40))
+    local pag_total_w=$(( num_pairs * 160 ))
+    local pag_start_x=$(( (menu_w - pag_total_w) / 2 ))
+    local pag_ps=$(( point_size - 2 ))
+    [ "$pag_ps" -lt "$MIN_POINT_SIZE" ] && pag_ps=$MIN_POINT_SIZE
+
+    for p in $(seq 0 $((num_pairs - 1))); do
+      local pidx=$(( p * 2 ))
+      local ptxt="${vmgm_pairs[$pidx]}"
+      local pcmd="${vmgm_pairs[$((pidx + 1))]}"
+      local btn_global_idx=$((num_items + p))
+
+      local px=$(( pag_start_x + p * 160 ))
+      # Center text within its 160px slot
+      local ptx=$(( px + 80 ))
+
+      y0_arr[$btn_global_idx]=$((pag_y - 5))
+      y1_arr[$btn_global_idx]=$((pag_y + pag_ps + 5))
+      x0_arr[$btn_global_idx]=$((px - 10))
+      x1_arr[$btn_global_idx]=$((px + 150))
+
+      # Draw on background (cyan-ish for pagination)
+      run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg_pag${p}.log" \
+        convert "${pfx}_bg.png" \
+          -gravity NorthWest -fill "#66ccff" -font "$FONT" -pointsize "$pag_ps" \
+          -annotate +${ptx}+${pag_y} "$ptxt" \
+          "${pfx}_bg_tmp.png" && mv "${pfx}_bg_tmp.png" "${pfx}_bg.png"
+
+      # Draw on highlight overlay
+      run_logged "$LOG_DIR/$(basename "$pfx")_convert_hl_pag${p}.log" \
+        convert "${pfx}_hl.png" +antialias \
+          -gravity NorthWest -fill red -stroke blue -strokewidth 1 -font "$FONT" -pointsize "$pag_ps" \
+          -annotate +${ptx}+${pag_y} "$ptxt" \
+          -colors 3 \
+          "${pfx}_hl_tmp.png" && mv "${pfx}_hl_tmp.png" "${pfx}_hl.png"
+    done
+  fi
 
   # ---- Generate blank menu video ----
   run_logged "$LOG_DIR/$(basename "$pfx")_ffmpeg_blank.log" \
@@ -468,6 +700,7 @@ build_menu() {
             -c:a copy -pix_fmt yuv420p -target "$TARGET" -f dvd \
             -b:v 6000k -maxrate 9000k -minrate 6000k -bufsize 1835k \
             "${pfx}_merged.mpg"
+
   # ---- Generate spumux XML ----
   {
     echo '<subpictures><stream>'
@@ -478,6 +711,10 @@ build_menu() {
       local down=$(( (i + 1) % num_items ))
       echo "    <button name=\"b$i\" x0=\"${x0_arr[$i]}\" y0=\"${y0_arr[$i]}\" x1=\"${x1_arr[$i]}\" y1=\"${y1_arr[$i]}\" up=\"b$up\" down=\"b$down\" />"
     done
+    for p in $(seq 0 $((num_pairs - 1))); do
+      local btn_global_idx=$((num_items + p))
+      echo "    <button name=\"b${btn_global_idx}\" x0=\"${x0_arr[$btn_global_idx]}\" y0=\"${y0_arr[$btn_global_idx]}\" x1=\"${x1_arr[$btn_global_idx]}\" y1=\"${y1_arr[$btn_global_idx]}\" up=\"b$(( (btn_global_idx - 1 + total_buttons) % total_buttons ))\" down=\"b$(( (btn_global_idx + 1) % total_buttons ))\" />"
+    done
     echo '  </spu>'
     echo '</stream></subpictures>'
   } > "${pfx}_btn.xml"
@@ -487,6 +724,21 @@ build_menu() {
     bash -c "spumux -m dvd '${pfx}_btn.xml' < '${pfx}_merged.mpg' > '$out_mpg'"
 
   [ -s "$out_mpg" ] || { echo "ERROR: spumux produced an empty/missing menu video: $out_mpg" >&2; exit 1; }
+
+  # Export pagination info for caller to use in dvdauthor XML. We use a sidecar file since bash functions can't return arrays cleanly
+  if [ "$num_pairs" -gt 0 ]; then
+    {
+      echo "NUM_ITEMS=$num_items"
+      echo "NUM_PAIRS=$num_pairs"
+      for p in $(seq 0 $((num_pairs - 1))); do
+        local pidx=$(( p * 2 ))
+        echo "PAG_LABEL_${p}=${vmgm_pairs[$pidx]}"
+        echo "PAG_CMD_${p}=${vmgm_pairs[$((pidx + 1))]}"
+      done
+    } > "${pfx}_paginfo.sh"
+  else
+    : > "${pfx}_paginfo.sh"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -593,14 +845,30 @@ echo " Target Format: ${DETECTED_FORMAT^^} (${WIDTH}x${HEIGHT})"
 echo " Output Directory: $OUT_DIR"
 echo "============================================================="
 
-# --- Build the ordered list of videos: main movie first, then extras ---
+# --- Scan extras: support extras/{subfolder}/*.mpg structure ---
 ALL_VIDEOS=("$MAIN_MOVIE")
+
+# extras_array stores the full paths; extras_categories stores the category name (or "" for flat)
+extras_array=()
+extras_categories=()
 
 shopt -s nullglob
 if [ -n "${EXTRAS_DIR:-}" ]; then
-  extras_array=( "$EXTRAS_DIR"/*.mpg )
-else
-  extras_array=()
+  # First: check for direct .mpg files in EXTRAS_DIR (flat structure, backward compatible)
+  for f in "$EXTRAS_DIR"/*.mpg; do
+    [ -s "$f" ] && extras_array+=("$f") && extras_categories+=("")
+  done
+
+  # Second: scan subfolders (extras/{Category}/*.mpg)
+  for subdir in "$EXTRAS_DIR"/*/; do
+    [ -d "$subdir" ] || continue
+    local_cat="$(basename "$subdir")"
+    # Skip if it looks like a hidden dir
+    [[ "$local_cat" == .* ]] && continue
+    for f in "$subdir"*.mpg; do
+      [ -s "$f" ] && extras_array+=("$f") && extras_categories+=("$local_cat")
+    done
+  done
 fi
 shopt -u nullglob
 
@@ -608,17 +876,21 @@ echo ""
 echo "============"
 if [ ${#extras_array[@]} -gt 0 ]; then
   echo "== Extras == (${#extras_array[@]} found in $EXTRAS_DIR)"
+  for i in "${!extras_array[@]}"; do
+    local cat_display="${extras_categories[$i]}"
+    [ -n "$cat_display" ] && cat_display=" [$cat_display]"
+    echo "   ${extras_array[$i]}${cat_display}"
+  done
 else
   echo "== Extras ==  (none found)"
 fi
 echo "============"
 for extra_mpg in "${extras_array[@]}"; do
-  [ -s "$extra_mpg" ] || { echo "ERROR: extra file is empty: $extra_mpg" >&2; exit 1; }
   verify_matches_main_format "$extra_mpg"
   ALL_VIDEOS+=("$extra_mpg")
 done
 
-# Arrays to hold state for HTML preview
+# Arrays for HTML preview
 ANALYSIS_TITLES=()
 ANALYSIS_SUBS_STR=()
 ANALYSIS_DEFAULTS=()
@@ -630,7 +902,7 @@ if [ ${#ALL_VIDEOS[@]} -gt 99 ]; then
   exit 1
 fi
 
-# --- Discover subtitles for every video (main + extras) up front ---
+# Discover subtitles for every video (main + extras) up front
 echo ""
 echo "------------------------------------"
 echo "Scanning subtitles for all titles..."
@@ -681,13 +953,19 @@ echo ""
 echo ""
 echo "Menu graphics will be built at standard DVD resolution ${WIDTH}x${HEIGHT} (${DETECTED_FORMAT^^}, target=${TARGET})"
 echo ""
+
+# Resolve menu background ONCE before any menu building
+echo "Resolving menu background..."
+resolve_menu_background
+echo ""
+
 echo "============================================================="
 echo " DVD BUILDER — ENCODING & AUTHORING"
 echo " Target Format: ${DETECTED_FORMAT^^} (${WIDTH}x${HEIGHT})"
 echo "============================================================="
 echo ""
 
-# --- Process Titleset 1: Main Movie ---
+# Process Titleset 1: Main Movie
 echo "[MAIN] Processing: $(prettify_filename "$MAIN_MOVIE")"
 discover_subs "$MAIN_MOVIE" 1 "[MAIN]"
 mux_subs "$MAIN_MOVIE" 1
@@ -707,7 +985,7 @@ else
   FPC_JUMP="g1 = 0; g2 = 0; jump vmgm menu entry title;"
 fi
 
-# --- Process Titleset 2..N: Extras ---
+# Process Titleset 2..N: Extras
 TS_IDX=2
 EXTRAS_MENU_LABELS=()
 EXTRAS_MENU_TARGETS=()
@@ -749,16 +1027,99 @@ echo " Generating VMGM Root Menu..."
 VMGM_MPG="$WORK_DIR/vmgm_menu.mpg"
 build_menu "$VMGM_MPG" "$movie_name_pretty" "${VMGM_LABELS[@]}"
 
-# Generate Extras Menu if it exists
-VMGM_EXTRAS_MPG=""
+# ---------------------------------------------------------------------------
+# Generate paginated Extras Menus
+# ---------------------------------------------------------------------------
+# Each page holds at most EXTRAS_PER_PAGE items. If there are multiple pages,
+# "Next page" / "Prev page" buttons are added as VMGM-pair buttons that
+# jump to the appropriate VMGM PGC.
+#
+# VMGM PGC layout:
+#   PGC 1 = Main Menu (already generated above)
+#   PGC 2 = Extras Page 1  (or the only extras page)
+#   PGC 3 = Extras Page 2  (if needed)
+#   ...
+#   PGC N = Extras Page N-1
+# ---------------------------------------------------------------------------
+EXTRAS_VMGM_PGCS=()  # array of PGC XML blocks for the <vmgm><menus> section
+
 if [ ${#EXTRAS_MENU_LABELS[@]} -gt 0 ]; then
-  echo " Generating VMGM Extras Menu..."
-  VMGM_EXTRAS_MPG="$WORK_DIR/vmgm_extras_menu.mpg"
-  EXTRAS_MENU_LABELS+=("Main Menu")
-  EXTRAS_MENU_TARGETS+=("g1 = 0; g2 = 0; jump vmgm menu entry title;")
-  build_menu "$VMGM_EXTRAS_MPG" "Extras Menu" "${EXTRAS_MENU_LABELS[@]}"
+  local_num_extras=${#EXTRAS_MENU_LABELS[@]}
+  local_num_pages=$(( (local_num_extras + EXTRAS_PER_PAGE - 1) / EXTRAS_PER_PAGE ))
+
+  echo " Generating VMGM Extras Menus ($local_num_pages page(s), $EXTRAS_PER_PAGE per page)..."
+
+  for page in $(seq 0 $((local_num_pages - 1))); do
+    local page_start=$(( page * EXTRAS_PER_PAGE ))
+    local page_end=$(( page_start + EXTRAS_PER_PAGE ))
+    [ "$page_end" -gt "$local_num_extras" ] && page_end=$local_num_extras
+
+    local page_labels=()
+    local page_targets=()
+    for i in $(seq "$page_start" $((page_end - 1))); do
+      page_labels+=("${EXTRAS_MENU_LABELS[$i]}")
+      page_targets+=("${EXTRAS_MENU_TARGETS[$i]}")
+    done
+
+    # Always add "Main Menu" at the bottom
+    page_labels+=("Main Menu")
+    page_targets+=("g1 = 0; g2 = 0; jump vmgm menu entry title;")
+
+    # Build pagination pair args for build_menu
+    local pag_args=()
+    if [ "$local_num_pages" -gt 1 ]; then
+      if [ "$page" -gt 0 ]; then
+        pag_args+=("<< Prev page" "jump vmgm menu $((page + 1));")
+      fi
+      if [ "$page" -lt $((local_num_pages - 1)) ]; then
+        pag_args+=("Next page >>" "jump vmgm menu $((page + 3));")
+      fi
+    fi
+
+    local page_mpg="$WORK_DIR/vmgm_extras_p${page}.mpg"
+    local page_title="Extras Menu"
+    [ "$local_num_pages" -gt 1 ] && page_title="Extras Menu (Page $((page + 1))/$local_num_pages)"
+
+    # Call build_menu with optional --vmgm-pairs-- sentinel
+    if [ ${#pag_args[@]} -gt 0 ]; then
+      build_menu "$page_mpg" "$page_title" "${page_labels[@]}" "--vmgm-pairs--" "${pag_args[@]}"
+    else
+      build_menu "$page_mpg" "$page_title" "${page_labels[@]}"
+    fi
+
+    # Source the pagination info sidecar
+    local paginfo="${page_mpg%.mpg}_paginfo.sh"
+    local pag_num_items=0 pag_num_pairs=0
+    if [ -f "$paginfo" ]; then
+      source "$paginfo"
+    fi
+
+    # Build the PGC XML block
+    local pgc_xml=""
+    local pgc_num=$(( page + 2 ))  # PGC 1 = main menu, extras start at PGC 2
+    pgc_xml+="      <pgc>\n"
+    pgc_xml+="        <vob file=\"$page_mpg\" pause=\"inf\" />\n"
+
+    # Regular buttons (content + "Main Menu")
+    for i in "${!page_targets[@]}"; do
+      pgc_xml+="        <button name=\"b$i\"> { ${page_targets[$i]} } </button>\n"
+    done
+
+    # Pagination buttons
+    for p in $(seq 0 $((pag_num_pairs - 1))); do
+      local btn_idx=$(( ${#page_targets[@]} + p ))
+      eval "local pcmd=\"\$PAG_CMD_${p}\""
+      pgc_xml+="        <button name=\"b${btn_idx}\"> { $pcmd } </button>\n"
+    done
+
+    pgc_xml+="      </pgc>\n"
+    EXTRAS_VMGM_PGCS+=("$pgc_xml")
+  done
 fi
 
+# ---------------------------------------------------------------------------
+# Assemble dvdauthor.xml
+# ---------------------------------------------------------------------------
 XML_FILE="$WORK_DIR/dvdauthor.xml"
 printf '<?xml version="1.0"?>\n' > "$XML_FILE"
 printf '<dvdauthor dest="%s" jumppad="yes">\n\n' "$OUT_DIR" >> "$XML_FILE"
@@ -777,15 +1138,10 @@ for i in "${!VMGM_TARGETS[@]}"; do
 done
 printf '      </pgc>\n' >> "$XML_FILE"
 
-# PGC 2: Extras Menu (only if extras exist)
-if [ -n "$VMGM_EXTRAS_MPG" ]; then
-  printf '      <pgc>\n' >> "$XML_FILE"
-  printf '        <vob file="%s" pause="inf" />\n' "$VMGM_EXTRAS_MPG" >> "$XML_FILE"
-  for i in "${!EXTRAS_MENU_TARGETS[@]}"; do
-    printf '        <button name="b%i"> { %s } </button>\n' "$i" "${EXTRAS_MENU_TARGETS[$i]}" >> "$XML_FILE"
-  done
-  printf '      </pgc>\n' >> "$XML_FILE"
-fi
+# PGC 2..N: Extras Pages
+for pgc_block in "${EXTRAS_VMGM_PGCS[@]}"; do
+  printf '%b' "$pgc_block" >> "$XML_FILE"
+done
 
 printf '    </menus>\n' >> "$XML_FILE"
 printf '  </vmgm>\n\n' >> "$XML_FILE"
