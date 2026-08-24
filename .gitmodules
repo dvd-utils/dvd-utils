@@ -1,0 +1,3 @@
+[submodule "dvd-subtitle-utils"]
+	path = dvd-subtitle-utils
+	url = https://github.com/dvd-utils/dvd-subtitle-utils.git
