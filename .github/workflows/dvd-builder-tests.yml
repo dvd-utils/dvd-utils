@@ -239,7 +239,7 @@ jobs:
           OUTPUT_DIR="dvd_output_$FMT"
           WORK_DIR="work_$FMT"
           chmod +x ./generate_dvd_with_menus/*.sh
-          echo "y" | bash ./generate_dvd_with_menus/build_dvd.sh \
+          echo "Y" | bash ./generate_dvd_with_menus/build_dvd.sh \
             -i "$TEST_DIR" \
             -m "$TEST_DIR/chicken_$FMT.mpg" \
             -e "$TEST_DIR/extras" \
