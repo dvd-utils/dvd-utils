@@ -48,8 +48,8 @@ normalize_language() {
     my|mya|bur|burmese) NORM_LANG_CODE="my"; NORM_LANG_LABEL="Burmese" ;;
     ca|cat|catalan) NORM_LANG_CODE="ca"; NORM_LANG_LABEL="Catalan" ;;
     zh|chi|zho|chinese) NORM_LANG_CODE="zh"; NORM_LANG_LABEL="Chinese" ;;
-    chs|zh_cn|chi_sim|chinese_simplified|chinese_(simplified)) NORM_LANG_CODE="zh"; NORM_LANG_LABEL="Chinese (Simplified)" ;;
-    cht|zh_tw|chi_tra|chinese_traditional|chinese_(traditional)) NORM_LANG_CODE="zh"; NORM_LANG_LABEL="Chinese (Traditional)" ;;
+    chs|zh_cn|chi_sim|chinese_simplified|chinese_\(simplified\)) NORM_LANG_CODE="zh"; NORM_LANG_LABEL="Chinese (Simplified)" ;;
+    cht|zh_tw|chi_tra|chinese_traditional|chinese_\(traditional\)) NORM_LANG_CODE="zh"; NORM_LANG_LABEL="Chinese (Traditional)" ;;
     hr|hrv|croatian) NORM_LANG_CODE="hr"; NORM_LANG_LABEL="Croatian" ;;
     cs|ces|cze|czech) NORM_LANG_CODE="cs"; NORM_LANG_LABEL="Czech" ;;
     da|dan|danish) NORM_LANG_CODE="da"; NORM_LANG_LABEL="Danish" ;;
@@ -60,7 +60,7 @@ normalize_language() {
     et|est|estonian) NORM_LANG_CODE="et"; NORM_LANG_LABEL="Estonian" ;;
     fi|fin|finnish) NORM_LANG_CODE="fi"; NORM_LANG_LABEL="Finnish" ;;
     fr|fra|fre|french) NORM_LANG_CODE="fr"; NORM_LANG_LABEL="French" ;;
-    fr_ca|fra_ca|fre_ca|french_canadian|french_(canada)) NORM_LANG_CODE="fr"; NORM_LANG_LABEL="French (Canada)" ;;
+    fr_ca|fra_ca|fre_ca|french_canadian|french_\(canada\)) NORM_LANG_CODE="fr"; NORM_LANG_LABEL="French (Canada)" ;;
     gl|glg|galician) NORM_LANG_CODE="gl"; NORM_LANG_LABEL="Galician" ;;
     ka|geo|kat|georgian) NORM_LANG_CODE="ka"; NORM_LANG_LABEL="Georgian" ;;
     de|deu|ger|german) NORM_LANG_CODE="de"; NORM_LANG_LABEL="German" ;;
