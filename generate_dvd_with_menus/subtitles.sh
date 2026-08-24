@@ -29,7 +29,7 @@ discover_subs() {
   local base_clean_no_space="${base_clean// /}"
 
   shopt -s nullglob
-  # TODO why not just gobble up all sub/idx files? `local all_sub_files=( *.idx *.sub )`
+  # TODO why not just gobble up all sub/idx/srt files? `local all_sub_files=( *.idx *.sub *.srt )`
   #      Normalize the video's base name once, then loop through all_sub_files, normalize each one, and check if it starts with the normalized video name:
   # normalize_str() {
   #   local s="$1"
@@ -38,8 +38,9 @@ discover_subs() {
   #   s="${s%.sub.idx}"      # remove extensions
   #   s="${s%.idx}"
   #   s="${s%.sup}"
+  #   s="${s%.srt}"
   #   s="${s,,}"             # lowercase
-  #   s="${s//[^a-z0-9]/}"   # strip all non-alphanumerics (spaces, underscores, dashes)
+  #   s="${s//[^a-z0-9]/}"   # strip all non-alphanumerics (spaces, underscores, dashes, dots)
   #   echo "$s"
   # }
   # local norm_video="$(normalize_str "$(basename "$in_mpg" .mpg)")"
@@ -55,12 +56,14 @@ discover_subs() {
     "${base_path}"_*.idx
     "${base_path}"_*.sub.idx
     "${base_path}"_*.sup
+    "${base_path}".*.srt
   )
   if [ "$base_path" != "$base_clean" ]; then
     raw_sub_files+=(
       "${base_clean}"_*.idx
       "${base_clean}"_*.sub.idx
       "${base_clean}"_*.sup
+      "${base_clean}".*.srt
     )
   fi
 
@@ -70,6 +73,7 @@ discover_subs() {
       "${base_path_no_space}"_*.idx
       "${base_path_no_space}"_*.sub.idx
       "${base_path_no_space}"_*.sup
+      "${base_path_no_space}".*.srt
     )
   fi
   if [ "$base_clean" != "$base_clean_no_space" ]; then
@@ -77,6 +81,7 @@ discover_subs() {
       "${base_clean_no_space}"_*.idx
       "${base_clean_no_space}"_*.sub.idx
       "${base_clean_no_space}"_*.sup
+      "${base_clean_no_space}".*.srt
     )
   fi
   shopt -u nullglob
@@ -111,7 +116,13 @@ discover_subs() {
       data_files+=("$f")
       continue
     fi
-
+    if [[ "$f" == *.srt ]]; then
+      # .srt is a self-contained text subtitle. No companion file needed.
+      [ -s "$f" ] || { echo "ERROR: subtitle file is empty: $f" >&2; exit 1; }
+      input_files_clean+=("$f")
+      data_files+=("$f")
+      continue
+    fi
     local sub=""
     # Clean VobSub companion logic to correctly handle all extension permutations
     if [[ "$f" == *.sub.idx ]]; then
@@ -159,60 +170,76 @@ discover_subs() {
   for i in "${!input_files[@]}"; do
     local f="${input_files[$i]}"
     local fname="$(basename "$f")"
-
-    # Strip extension (.sub.idx, .idx, or .sup) cleanly to isolate track suffix
-    local stem=""
-
-    if [[ "$fname" == *.sub.idx ]]; then
-      stem="${fname%.sub.idx}"
-    elif [[ "$fname" == *.sup ]]; then
-      stem="${fname%.sup}"
-    else
-      stem="${fname%.idx}"
-    fi
-
-    # Extract suffix after video prefix
-    local suffix="$stem"
-    local stem_no_space="${stem// /}"
-
-    if [[ "$suffix" == "${video_stem}_"* ]]; then
-      suffix="${suffix#"${video_stem}_"}"
-    elif [[ "$suffix" == "${video_stem_clean}_"* ]]; then
-      suffix="${suffix#"${video_stem_clean}_"}"
-    elif [[ "$stem_no_space" == "${video_stem_no_space}_"* ]]; then
-      suffix="${stem_no_space#"${video_stem_no_space}_"}"
-    elif [[ "$stem_no_space" == "${video_stem_clean_no_space}_"* ]]; then
-      suffix="${stem_no_space#"${video_stem_clean_no_space}_"}"
-    else
-      suffix="${suffix#"${video_stem}"}"
-      suffix="${suffix#"${video_stem_clean}"}"
-      suffix="${suffix#"${video_stem_no_space}"}"
-      suffix="${suffix#"${video_stem_clean_no_space}"}"
-      suffix="${suffix#_}"
-    fi
-
-    # Strip trailing _exp
-    suffix="${suffix%_exp}"
-    suffix="${suffix%.exp}"
-    suffix="${suffix%-exp}"
-
-    # Check for track0 / track{n}
+    local raw_lang=""
     local is_track0=0
-    if [[ "$suffix" =~ ^track0(_|-|$) ]]; then
-      is_track0=1
-      suffix="${suffix#track0}"
-      suffix="${suffix#_}"
-      suffix="${suffix#-}"
-    elif [[ "$suffix" =~ ^track[0-9]+(_|-|$) ]]; then
-      local trk="${BASH_REMATCH[0]}"
-      suffix="${suffix#"$trk"}"
-      suffix="${suffix#_}"
-      suffix="${suffix#-}"
+    if [[ "$fname" == *.srt ]]; then
+      # .srt uses a DOT-separated language suffix: "Movie Name.lang.srt" (as opposed to the underscore-separated suffix used by .idx/.sub.idx/.sup)
+      local srt_stem="${fname%.srt}"
+      local srt_stem_no_space="${srt_stem// /}"
+      if [[ "$srt_stem" == "${video_stem}."* ]]; then
+        raw_lang="${srt_stem#"${video_stem}."}"
+      elif [[ "$srt_stem" == "${video_stem_clean}."* ]]; then
+        raw_lang="${srt_stem#"${video_stem_clean}."}"
+      elif [[ "$srt_stem_no_space" == "${video_stem_no_space}."* ]]; then
+        raw_lang="${srt_stem_no_space#"${video_stem_no_space}."}"
+      elif [[ "$srt_stem_no_space" == "${video_stem_clean_no_space}."* ]]; then
+        raw_lang="${srt_stem_no_space#"${video_stem_clean_no_space}."}"
+      else
+        # Fall back to whatever trails the final dot, e.g. "Movie Name.en.srt" -> "en"
+        raw_lang="${srt_stem##*.}"
+      fi
+    else
+      # Strip extension (.sub.idx, .idx, or .sup) cleanly to isolate track suffix
+      local stem=""
+
+      if [[ "$fname" == *.sub.idx ]]; then
+        stem="${fname%.sub.idx}"
+      elif [[ "$fname" == *.sup ]]; then
+        stem="${fname%.sup}"
+      else
+        stem="${fname%.idx}"
+      fi
+
+      # Extract suffix after video prefix
+      local suffix="$stem"
+      local stem_no_space="${stem// /}"
+
+      if [[ "$suffix" == "${video_stem}_"* ]]; then
+        suffix="${suffix#"${video_stem}_"}"
+      elif [[ "$suffix" == "${video_stem_clean}_"* ]]; then
+        suffix="${suffix#"${video_stem_clean}_"}"
+      elif [[ "$stem_no_space" == "${video_stem_no_space}_"* ]]; then
+        suffix="${stem_no_space#"${video_stem_no_space}_"}"
+      elif [[ "$stem_no_space" == "${video_stem_clean_no_space}_"* ]]; then
+        suffix="${stem_no_space#"${video_stem_clean_no_space}_"}"
+      else
+        suffix="${suffix#"${video_stem}"}"
+        suffix="${suffix#"${video_stem_clean}"}"
+        suffix="${suffix#"${video_stem_no_space}"}"
+        suffix="${suffix#"${video_stem_clean_no_space}"}"
+        suffix="${suffix#_}"
+      fi
+
+      # Strip trailing _exp
+      suffix="${suffix%_exp}"
+      suffix="${suffix%.exp}"
+      suffix="${suffix%-exp}"
+
+      # Check for track0 / track{n}
+      if [[ "$suffix" =~ ^track0(_|-|$) ]]; then
+        is_track0=1
+        suffix="${suffix#track0}"
+        suffix="${suffix#_}"
+        suffix="${suffix#-}"
+      elif [[ "$suffix" =~ ^track[0-9]+(_|-|$) ]]; then
+        local trk="${BASH_REMATCH[0]}"
+        suffix="${suffix#"$trk"}"
+        suffix="${suffix#_}"
+        suffix="${suffix#-}"
+      fi
+      raw_lang="$suffix"
     fi
-
-    local raw_lang="$suffix"
     [ -n "$raw_lang" ] || raw_lang="Language $((i+1))"
-
     normalize_language "$raw_lang"
     local label_name="$NORM_LANG_LABEL"
     local lang_code="$NORM_LANG_CODE"
@@ -291,12 +318,29 @@ mux_subs() {
     local data_file="${data_files[$i]}"
     local pfx="$WORK_DIR/ts${ts_idx}_sub_${i}"
     local stage_base="$WORK_DIR/ts${ts_idx}_sub_${i}_input"
-    local bdsup_in=""
     local label="${CURRENT_SUB_LABELS[$i]}"
-    # Stage files into clean paths for bdsup2sub.
-    # Preserve exact companion basename matching so the internal .idx reference resolves properly.
-
+    
     echo "  -> Muxing Subtitle $((i+1))/${#input_files[@]}: $label"
+    # .srt is plain text and has no bitmap frames to render via bdsup2sub; spumux can burn text subtitles directly via its <textsub> element, so we skip straight to building a textsub XML and hand it to spumux.
+    if [[ "$f" == *.srt ]]; then
+      local stage_srt="${stage_base}.srt"
+      cp "$f" "$stage_srt"
+      cat > "${pfx}.xml" <<EOF
+<subpictures>
+  <stream>
+    <textsub filename="${stage_srt}" characterset="UTF-8" movie-fps="${FPS}" movie-width="${WIDTH}" movie-height="${HEIGHT}" />
+  </stream>
+</subpictures>
+EOF
+      echo "     Muxing text subtitle into video..."
+      local next_vid="$WORK_DIR/ts${ts_idx}_mux_${i}.mpg"
+      run_logged "$LOG_DIR/ts${ts_idx}_spumux_${i}.log" bash -c "spumux -s '$i' '${pfx}.xml' < '$current_vid' > '$next_vid'"
+      [ -s "$next_vid" ] || { echo "ERROR: spumux produced an empty output muxing subtitle track $i into $(basename "$in_mpg")." >&2; exit 1; }
+      current_vid="$next_vid"
+      continue
+    fi
+    local bdsup_in=""
+    # Stage files into clean paths for bdsup2sub. Preserve exact companion basename matching so the internal .idx reference resolves properly.
     if [[ "$f" == *.sup ]]; then
       cp "$f" "${stage_base}.sup"
       bdsup_in="${stage_base}.sup"
