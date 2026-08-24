@@ -1,11 +1,12 @@
-
-# End-to-end tests for build_dvd.sh using checked-in test assets:
-#   tests/chicken_PAL.mpg   – short PAL MPEG-2 clip
-#   tests/chicken_NTSC.mpg  – short NTSC MPEG-2 clip
-#   tests/chicken.srt       – subtitle track shared by both
+# Test assets live inside the dvd-subtitle-utils submodule:
+#   dvd-subtitle-utils/tests/chicken_PAL.mpg
+#   dvd-subtitle-utils/tests/chicken_NTSC.mpg
+#   dvd-subtitle-utils/tests/chicken.srt
 #
-# The workflow runs the full pipeline (analysis → encoding → authoring → ISO)
-# for each video format and validates the resulting DVD-Video structure.
+# The workflow checks out the repo + submodules recursively, pulls
+# Git-LFS objects inside the submodule, then runs the full pipeline
+# (analysis → encoding → authoring → ISO) for each video format and
+# validates the resulting DVD-Video structure.
 
 name: DVD Builder E2E Tests
 
@@ -13,12 +14,14 @@ on:
   push:
     paths:
       - '**/*.sh'
-      - 'tests/**'
+      - '.gitmodules'
+      - 'dvd-subtitle-utils'
       - '.github/workflows/dvd-builder-tests.yml'
   pull_request:
     paths:
       - '**/*.sh'
-      - 'tests/**'
+      - '.gitmodules'
+      - 'dvd-subtitle-utils'
       - '.github/workflows/dvd-builder-tests.yml'
   workflow_dispatch:
 
@@ -36,35 +39,77 @@ jobs:
         format: [PAL, NTSC]
 
     steps:
-      # ------------------------------------------------------------------
-      # 1 Checkout
-      # ------------------------------------------------------------------
-      - uses: actions/checkout@v4
+      # ==============================================================
+      # 1. Checkout main repo + all submodules recursively
+      #    lfs: true handles LFS for the main repo only;
+      #    submodule LFS is pulled separately in step 2.
+      # ==============================================================
+      - name: Checkout repo with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          lfs: true
 
-      # ------------------------------------------------------------------
-      # 2. Verify the checked-in test assets exist and are non-empty
-      # ------------------------------------------------------------------
-      - name: Verify test files exist
+      # ==============================================================
+      # 2. Pull Git-LFS objects inside the submodule
+      #    actions/checkout's `lfs` option does NOT descend into
+      #    submodules, so .mpg files inside dvd-subtitle-utils would
+      #    remain ~130-byte LFS pointer stubs without this step.
+      # ==============================================================
+      - name: Pull LFS objects in submodule
         run: |
-          echo "=== Checking test assets ==="
-          for f in "tests/chicken_PAL.mpg" "tests/chicken_NTSC.mpg" "tests/chicken.srt"; do
-            test -f "$f" || { echo "❌ Test file not found: $f"; exit 1; }
-            test -s "$f" || { echo "❌ Test file is empty: $f"; exit 1; }
-          done
-          echo "✅ All test files present"
-          echo ""
-          echo "File sizes:"
-          ls -lh tests/chicken_PAL.mpg tests/chicken_NTSC.mpg tests/chicken.srt
+          git lfs install
+          cd dvd-subtitle-utils
+          git lfs pull
+          echo "LFS pull complete for dvd-subtitle-utils"
 
-      # ------------------------------------------------------------------
-      # 3. Install system packages
-      #    - ffmpeg / ffprobe : video probing & encoding
-      #    - dvdauthor / spumux : DVD-Video authoring & subtitle muxing
-      #    - imagemagick        : menu background/highlight generation
-      #    - genisoimage        : ISO creation for final validation
-      #    - default-jre-headless : fallback for bdsup2sub.jar if needed
-      #    - qt6-base-dev      : build dependency for bdsup2sub++
-      # ------------------------------------------------------------------
+      # ==============================================================
+      # 3. Verify the submodule was cloned and that test assets
+      #    are real media files (not unfetched LFS pointers)
+      # ==============================================================
+      - name: Verify test files from submodule
+        run: |
+          TESTS="dvd-subtitle-utils/tests"
+
+          # Submodule directory must exist
+          test -d "dvd-subtitle-utils" || {
+            echo "❌ Submodule 'dvd-subtitle-utils' was not checked out"
+            echo "  Ensure submodules: recursive is set on the checkout step"
+            exit 1
+          }
+
+          # Tests directory must exist inside the submodule
+          test -d "$TESTS" || {
+            echo "❌ Directory '$TESTS' not found"
+            echo "  Submodule contents (top 20 files):"
+            find dvd-subtitle-utils -maxdepth 3 -type f | head -20
+            exit 1
+          }
+
+          echo "=== Verifying test assets ==="
+          for f in "chicken_PAL.mpg" "chicken_NTSC.mpg" "chicken.srt"; do
+            test -f "$TESTS/$f" || { echo "❌ Not found: $TESTS/$f"; exit 1; }
+            test -s "$TESTS/$f" || { echo "❌ Empty file: $TESTS/$f"; exit 1; }
+
+            size=$(stat -c%s "$TESTS/$f")
+            # LFS pointer files are ~130 bytes; real media should be
+            # much larger. This catches the case where LFS pull failed.
+            if [ "$size" -lt 1000 ]; then
+              echo "❌ $TESTS/$f is only $size bytes — likely an unfetched LFS pointer:"
+              head -c 200 "$TESTS/$f"
+              echo ""
+              exit 1
+            fi
+            echo "  ✓ $f ($size bytes)"
+          done
+
+          echo ""
+          echo "=== Submodule HEAD ==="
+          git -C dvd-subtitle-utils log --oneline -1
+
+      # ==============================================================
+      # 4. Install system packages
+      # ==============================================================
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -75,15 +120,15 @@ jobs:
             genisoimage \
             default-jre-headless \
             qt6-base-dev \
-            git \
+            git-lfs \
             build-essential
 
-      # ------------------------------------------------------------------
-      # 4. Build bdsup2sub++ (not packaged in Ubuntu repos)
-      #    If the build fails we fall back to a stub so the tool-check
-      #    passes — subtitle conversion won't work but basic DVD
-      #    authoring (the focus of this E2E test) still proceeds.
-      # ------------------------------------------------------------------
+      # ==============================================================
+      # 5. Build bdsup2sub++ (not in Ubuntu repos)
+      #    If the build fails we fall back to a stub so the
+      #    tool-check passes — subtitle conversion won't work but
+      #    DVD authoring (the focus of this E2E test) still proceeds.
+      # ==============================================================
       - name: Build bdsup2sub++ from source
         id: build_bdsup
         continue-on-error: true
@@ -127,9 +172,9 @@ jobs:
           STUB
           sudo chmod +x /usr/local/bin/bdsup2sub++
 
-      # ------------------------------------------------------------------
-      # 5. Verify every tool the script calls with `need()` is present
-      # ------------------------------------------------------------------
+      # ==============================================================
+      # 6. Verify every required tool is present
+      # ==============================================================
       - name: Verify all required tools
         run: |
           echo "=== Tool verification ==="
@@ -155,39 +200,38 @@ jobs:
           convert -list font | grep -iE 'Font: .*(Arial-Bold|DejaVu-Sans-Bold|Helvetica-Bold)' \
             || { echo "  ⚠ No preferred bold font found; available fonts:"; convert -list font | grep 'Font:'; }
 
-      # ------------------------------------------------------------------
-      # 6. Set up a self-contained test directory per format
-      #    The main movie and the extra use the SAME .mpg (guaranteed
-      #    same format so verify_matches_main_format passes).
-      #    The .srt is copied alongside each video so subtitles.sh
-      #    can discover it if it supports SRT; if not, the build
-      #    still succeeds without subtitles.
-      # ------------------------------------------------------------------
+      # ==============================================================
+      # 7. Set up a self-contained test directory per format
+      #    Files are copied OUT of the submodule into a clean
+      #    working directory so build_dvd.sh doesn't need to know
+      #    about submodule paths.
+      # ==============================================================
       - name: Set up test environment (${{ matrix.format }})
         run: |
           FMT="${{ matrix.format }}"
+          TESTS="dvd-subtitle-utils/tests"
           TEST_DIR="test_$FMT"
           mkdir -p "$TEST_DIR/extras"
 
-          # Main movie
-          cp "tests/chicken_$FMT.mpg" "$TEST_DIR/chicken_$FMT.mpg"
-          cp "tests/chicken.srt"      "$TEST_DIR/chicken_$FMT.srt"
+          # Main movie + subtitle from the submodule
+          cp "$TESTS/chicken_$FMT.mpg" "$TEST_DIR/chicken_$FMT.mpg"
+          cp "$TESTS/chicken.srt"      "$TEST_DIR/chicken_$FMT.srt"
 
-          # Extra (same file → identical format, guaranteed to pass the
-          # verify_matches_main_format check)
-          cp "tests/chicken_$FMT.mpg" "$TEST_DIR/extras/bonus_clip.mpg"
-          cp "tests/chicken.srt"      "$TEST_DIR/extras/bonus_clip.srt"
+          # Extra: same .mpg (guaranteed identical format so
+          # verify_matches_main_format passes)
+          cp "$TESTS/chicken_$FMT.mpg" "$TEST_DIR/extras/bonus_clip.mpg"
+          cp "$TESTS/chicken.srt"      "$TEST_DIR/extras/bonus_clip.srt"
 
           echo "=== Test directory layout ($FMT) ==="
           find "$TEST_DIR" -type f -exec ls -lh {} \;
 
-      # ------------------------------------------------------------------
-      # 7. Run build_dvd.sh end-to-end
+      # ==============================================================
+      # 8. Run build_dvd.sh end-to-end
       #    - `echo y |` answers the interactive confirmation prompt
       #    - -m explicitly sets the main movie (tests the flag)
       #    - -e provides the extras directory
       #    - -d en sets default subtitle language to English
-      # ------------------------------------------------------------------
+      # ==============================================================
       - name: Run DVD builder (${{ matrix.format }})
         run: |
           FMT="${{ matrix.format }}"
@@ -204,17 +248,17 @@ jobs:
             -d "en"
 
           echo ""
-          echo "build_dvd.sh exited with code: $?"
+          echo "build_dvd.sh completed successfully"
 
-      # ------------------------------------------------------------------
-      # 8. Verify the DVD-Video directory structure
+      # ==============================================================
+      # 9. Verify the DVD-Video directory structure
       #    A valid DVD-Video must contain:
       #      VIDEO_TS.{IFO,BUP,VOB}  — disc-level menu (VMGM)
       #      VTS_01_0.{IFO,BUP}      — titleset 1 IFO + backup
       #      VTS_01_1.VOB            — titleset 1 video (main movie)
       #      VTS_02_0.{IFO,BUP}      — titleset 2 IFO + backup
       #      VTS_02_1.VOB            — titleset 2 video (extras)
-      # ------------------------------------------------------------------
+      # ==============================================================
       - name: Verify DVD structure (${{ matrix.format }})
         run: |
           set -e
@@ -228,19 +272,19 @@ jobs:
           echo ""
           echo "=== Validating required files ==="
 
-          # --- VMGM (disc-level menu) ---
+          # VMGM (disc-level menu)
           for f in VIDEO_TS.IFO VIDEO_TS.BUP VIDEO_TS.VOB; do
             test -s "$OUT/VIDEO_TS/$f" || { echo "  ❌ Missing/empty: $f"; exit 1; }
             echo "  ✓ $f"
           done
 
-          # --- Titleset 1 (main movie) ---
+          # Titleset 1 (main movie)
           for f in VTS_01_0.IFO VTS_01_0.BUP VTS_01_1.VOB; do
             test -s "$OUT/VIDEO_TS/$f" || { echo "  ❌ Missing/empty: $f"; exit 1; }
             echo "  ✓ $f"
           done
 
-          # --- Titleset 2 (extras) ---
+          # Titleset 2 (extras)
           for f in VTS_02_0.IFO VTS_02_0.BUP VTS_02_1.VOB; do
             test -s "$OUT/VIDEO_TS/$f" || { echo "  ❌ Missing/empty: $f"; exit 1; }
             echo "  ✓ $f"
@@ -249,10 +293,10 @@ jobs:
           echo ""
           echo "✅ All DVD structure checks passed for ${{ matrix.format }}"
 
-      # ------------------------------------------------------------------
-      # 9. Validate with genisoimage — if the DVD-Video structure
-      #    is malformed, genisoimage -dvd-video will fail.
-      # ------------------------------------------------------------------
+      # ==============================================================
+      # 10. Validate with genisoimage — a malformed DVD-Video
+      #     structure will cause -dvd-video to fail.
+      # ==============================================================
       - name: Test ISO generation (${{ matrix.format }})
         run: |
           OUT="dvd_output_${{ matrix.format }}"
@@ -264,9 +308,9 @@ jobs:
           SIZE=$(stat -c%s "$ISO")
           echo "✅ ISO created: $SIZE bytes ($(( SIZE / 1024 )) KiB)"
 
-      # ------------------------------------------------------------------
-      # 10. Always print the generated XML for debugging
-      # ------------------------------------------------------------------
+      # ==============================================================
+      # 11. Always print the generated XML for debugging
+      # ==============================================================
       - name: Show generated dvdauthor XML
         if: always()
         run: |
@@ -278,9 +322,9 @@ jobs:
             echo "(dvdauthor.xml not found — the build likely failed before authoring)"
           fi
 
-      # ------------------------------------------------------------------
-      # 11. Upload artifacts for post-mortem inspection
-      # ------------------------------------------------------------------
+      # ==============================================================
+      # 12. Upload artifacts for post-mortem inspection
+      # ==============================================================
       - name: Upload build artifacts
         if: always()
         uses: actions/upload-artifact@v4
