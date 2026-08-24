@@ -4,8 +4,11 @@ Some utilities to generate a DVD with menus and subtitles from a bag of video an
 
 ## Usage
 ```
-# 0) This project depends on some submodules; initialize them
+# This project depends on some submodules; initialize them
 git submodule update --init --depth=1
+
+# Make all bash scripts executable
+find . -type f -name '*.sh' -exec chmod +x {} + 
 
 # 1) Pre-encode any .mkv/.mp4/... in ./movies into DVD-compliant .mpg
 ./encode_to_dvd_mpeg2.sh -i ./movies -f pal
