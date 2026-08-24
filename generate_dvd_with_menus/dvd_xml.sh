@@ -22,7 +22,7 @@ CURRENT_MUXED_MPG=""
 CURRENT_DEFAULT_SUBP=62 # 62 = off (DVD convention)
 CURRENT_INPUT_FILES=()
 CURRENT_DATA_FILES=()
-
+declare -gA LAST_PAG_INFO=()
 # Defaults for VMGM/FPC assembly (overwritten by the main script during processing)
 MAIN_DEFAULT_SUBP=62
 FPC_JUMP="g1 = 0; g2 = 0; jump vmgm menu entry title;"
@@ -176,12 +176,14 @@ generate_extras_pgc_xml() {
       build_menu "$page_mpg" "$page_title" "${page_labels[@]}"
     fi
 
-    # Source the pagination info sidecar
-    local paginfo="${page_mpg%.mpg}_paginfo.sh"
-    local pag_num_items=0 pag_num_pairs=0
-    if [ -f "$paginfo" ]; then
-      source "$paginfo"
-    fi
+    # # Source the pagination info sidecar
+    # local paginfo="${page_mpg%.mpg}_paginfo.sh"
+    # local pag_num_items=0 pag_num_pairs=0
+    # if [ -f "$paginfo" ]; then
+    #   source "$paginfo"
+    # fi
+    local pag_num_items="${LAST_PAG_INFO[num_items]:-0}"
+    local pag_num_pairs="${LAST_PAG_INFO[num_pairs]:-0}"
 
     # Build the PGC XML block
     local pgc_xml=""
@@ -197,7 +199,7 @@ generate_extras_pgc_xml() {
     # Pagination buttons
     for p in $(seq 0 $((pag_num_pairs - 1))); do
       local btn_idx=$(( ${#page_targets[@]} + p ))
-      eval "local pcmd=\"\$PAG_CMD_${p}\""
+      local pcmd="${LAST_PAG_INFO[cmd_${p}]}"
       pgc_xml+="        <button name=\"b${btn_idx}\"> { $pcmd } </button>\n"
     done
 
@@ -754,18 +756,30 @@ build_menu() {
 
   [ -s "$out_mpg" ] || { echo "ERROR: spumux produced an empty/missing menu video: $out_mpg" >&2; exit 1; }
 
-  # Export pagination info for caller to use in dvdauthor XML. We use a sidecar file since bash functions can't return arrays cleanly
+  # # Export pagination info for caller to use in dvdauthor XML. We use a sidecar file since bash functions can't return arrays cleanly
+  # # M: we set the global value LAST_PAG_INFO instead
+  # if [ "$num_pairs" -gt 0 ]; then
+  #   {
+  #     echo "NUM_ITEMS=$num_items"
+  #     echo "NUM_PAIRS=$num_pairs"
+  #     for p in $(seq 0 $((num_pairs - 1))); do
+  #       local pidx=$(( p * 2 ))
+  #       echo "PAG_LABEL_${p}=\"${vmgm_pairs[$pidx]}\""
+  #       echo "PAG_CMD_${p}=\"${vmgm_pairs[$((pidx + 1))]}\""
+  #     done
+  #   } > "${pfx}_paginfo.sh"
+  # else
+  #   : > "${pfx}_paginfo.sh"
+  # fi
   if [ "$num_pairs" -gt 0 ]; then
-    {
-      echo "NUM_ITEMS=$num_items"
-      echo "NUM_PAIRS=$num_pairs"
-      for p in $(seq 0 $((num_pairs - 1))); do
-        local pidx=$(( p * 2 ))
-        echo "PAG_LABEL_${p}=${vmgm_pairs[$pidx]}"
-        echo "PAG_CMD_${p}=${vmgm_pairs[$((pidx + 1))]}"
-      done
-    } > "${pfx}_paginfo.sh"
+    LAST_PAG_INFO[num_items]="$num_items"
+    LAST_PAG_INFO[num_pairs]="$num_pairs"
+    for p in $(seq 0 $((num_pairs - 1))); do
+      local pidx=$(( p * 2 ))
+      LAST_PAG_INFO[label_$p]="${vmgm_pairs[$pidx]}"
+      LAST_PAG_INFO[cmd_$p]="${vmgm_pairs[$((pidx + 1))]}"
+    done
   else
-    : > "${pfx}_paginfo.sh"
+    LAST_PAG_INFO[num_pairs]=0
   fi
 }
