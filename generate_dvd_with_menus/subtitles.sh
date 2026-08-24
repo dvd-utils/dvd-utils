@@ -53,20 +53,23 @@ discover_subs() {
   # done
   # This completely eliminates the need for separate spaceless globs, handles _pal vs _PAL automatically, and makes the suffix extraction much easier because you can just compare the normalized strings to find exactly where the video name ends and the language suffix begins. Just an idea.
   local raw_sub_files=(
-    "${base_path}"_*.idx
-    "${base_path}"_*.sub.idx
-    "${base_path}"_*.sup
-    "${base_path}".*.srt
+    "${base_path}.srt"
+    "${base_path}_"*.srt
+    "${base_path}_"*.idx
+    "${base_path}_"*.sub.idx
+    "${base_path}_"*.sup
+    "${base_path}."*.srt
   )
   if [ "$base_path" != "$base_clean" ]; then
     raw_sub_files+=(
-      "${base_clean}"_*.idx
-      "${base_clean}"_*.sub.idx
-      "${base_clean}"_*.sup
-      "${base_clean}".*.srt
+      "${base_clean}.srt"
+      "${base_clean}_"*.srt
+      "${base_clean}_"*.idx
+      "${base_clean}_"*.sub.idx
+      "${base_clean}_"*.sup
+      "${base_clean}."*.srt
     )
   fi
-
   # Add spaceless variants if they differ from the originals
   if [ "$base_path" != "$base_path_no_space" ]; then
     raw_sub_files+=(
