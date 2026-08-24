@@ -42,7 +42,21 @@ html_escape() {
   s="${s//&/&amp;}"; s="${s//</&lt;}"; s="${s//>/&gt;}"; s="${s//\"/&quot;}"
   printf '%s' "$s"
 }
-
+# ---------------------------------------------------------------------------
+# HELPER: Echo $1 if it is a clean non-negative number, otherwise $2 (or "").
+# Every value coming out of ffprobe/grep/env must pass through here before
+# it is used in [ ... -eq ] or spliced into an awk program — those sources
+# can emit "N/A", empty output, or junk.
+# ---------------------------------------------------------------------------
+num_or() {
+  local v="${1:-}" fb="${2:-}"
+  v="${v//[[:space:]]/}"
+  if [[ "$v" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    printf '%s' "$v"
+  else
+    printf '%s' "$fb"
+  fi
+}
 # ---------------------------------------------------------------------------
 # HELPER: Convert time formats to seconds (float).
 # Handles: "HH:MM:SS.mmm", "HH:MM:SS,mmm", "HH:MM:SS:mmm", "MM:SS.mmm", ints
@@ -81,6 +95,7 @@ convert_time_to_seconds() {
 get_first_sub_time() {
   local sub_file="$1"
   local ext="${sub_file##*.}"
+  ext="${ext,,}"                        # case-insensitive extension check
   local tc="" line pts
 
   case "$ext" in
@@ -89,7 +104,11 @@ get_first_sub_time() {
       tc=$(printf '%s\n' "$line" | grep -oE '[0-9]{2}:[0-9]{2}:[0-9]{2}[,.][0-9]{3}' | head -1)
       ;;
     sup)
-      pts=$(ffprobe -v error -select_streams s -show_entries packet=pts_time -of csv=p=0 "$sub_file" 2>/dev/null | grep -m1 '.' || true)
+      # Only accept clean numeric timestamps; ffprobe prints "N/A" when a
+      # packet has no pts, and "N/A" spliced into awk breaks the arithmetic.
+      pts=$(ffprobe -v error -select_streams s -show_entries packet=pts_time \
+              -of csv=p=0 "$sub_file" 2>/dev/null \
+            | grep -m1 -E '^[0-9]+([.][0-9]+)?$' || true)
       [ -n "$pts" ] && { printf '%s\n' "$pts"; return 0; }
       return 1
       ;;
@@ -100,9 +119,10 @@ get_first_sub_time() {
   esac
 
   [ -n "$tc" ] || return 1
-  convert_time_to_seconds "$tc"
+  # convert_time_to_seconds always emits a number, but route it through
+  # num_or anyway so a future edit can't reintroduce the bug.
+  num_or "$(convert_time_to_seconds "$tc")" ""
 }
-
 # ---------------------------------------------------------------------------
 # HELPER (fallback only): Locate a subtitle entry file for a video using the
 # SAME glob conventions as discover_subs() in subtitles.sh:
@@ -356,12 +376,16 @@ generate_preview_clip() {
   local sub_dir="$PREVIEW_CACHE_DIR/ts${ts_idx}_subs"
   local sub_json=""
 
+  # Sanitize inputs before they reach [ -eq ] / awk
+  has_subs=$(num_or "$has_subs" 0)
+
   # Resolve the subtitle file to preview (the DEFAULT track, passed in from
   # the analysis phase; fallback to the discover_subs-style glob if absent).
   if [ "$has_subs" -eq 1 ]; then
     if [ -z "$sub_file" ] || [ ! -f "$sub_file" ]; then
       sub_file=$(find_subtitle_for_preview "$src" 2>/dev/null || true)
     fi
+    [ -f "$sub_file" ] || sub_file=""   # a stale glob result is no good either
   fi
 
   if ! command -v ffmpeg >/dev/null 2>&1; then
@@ -370,26 +394,32 @@ generate_preview_clip() {
     return 1
   fi
 
+  # Source duration. ffprobe may print "N/A" or nothing; num_or turns all of that into a plain 0. The '|| true' keeps a hard ffprobe failure from aborting the whole build under 'set -e'.
   local dur
-  dur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$src" 2>/dev/null)
-  dur=${dur%.*}
-  [ -z "$dur" ] && dur=0
+  dur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$src" 2>/dev/null || true)
+  dur=$(num_or "${dur%.*}" 0)
 
-  local start="$PREVIEW_CLIP_START"
+  local start
+  start=$(num_or "$PREVIEW_CLIP_START" 120)
+
   if [ "$dur" -gt 0 ] && [ "$start" -ge "$dur" ]; then
     start=$(( dur / 4 ))
   fi
 
-  # If subtitles exist but start after our window, slide the window to them
+  # If subtitles exist but start after our window, slide the window to them.
+  # Every value entering the awk programs is validated first — a stray "N/A"
+  # or empty string used to leave $move empty, which then blew up
+  # [ "$move" -eq 1 ] with "integer expression expected".
   if [ "$has_subs" -eq 1 ] && [ -n "$sub_file" ]; then
     local first_sub
     first_sub=$(get_first_sub_time "$sub_file" 2>/dev/null || true)
+    first_sub=$(num_or "$first_sub" "")
     if [ -n "$first_sub" ]; then
       local move
-      move=$(awk "BEGIN { print ($first_sub >= $start + $PREVIEW_CLIP_SECONDS) ? 1 : 0 }")
+      move=$(num_or "$(awk "BEGIN { print ($first_sub >= $start + $PREVIEW_CLIP_SECONDS) ? 1 : 0 }" 2>/dev/null || true)" 0)
       if [ "$move" -eq 1 ]; then
         local newstart
-        newstart=$(awk "BEGIN { printf \"%d\", ($first_sub > 2 ? $first_sub - 2 : 0) }")
+        newstart=$(num_or "$(awk "BEGIN { printf \"%d\", ($first_sub > 2 ? $first_sub - 2 : 0) }" 2>/dev/null || true)" "$start")
         if [ "$dur" -eq 0 ] || [ "$newstart" -lt "$dur" ]; then
           echo "  -> Aligning ts${ts_idx} preview window with first subtitle (~${newstart}s)" >&2
           start="$newstart"
@@ -435,8 +465,7 @@ generate_preview_clip() {
         sub_json=$(extract_subtitle_frames "$sub_file" "$sub_dir" "$start" "$PREVIEW_CLIP_SECONDS" "$ts_idx" || true)
         if [ -n "$sub_json" ] && [ -s "$sub_json" ]; then
           local cnt
-          cnt=$(grep -c '"start"' "$sub_json" 2>/dev/null || true)
-          [ -z "$cnt" ] && cnt=0
+          cnt=$(num_or "$(grep -c '"start"' "$sub_json" 2>/dev/null || true)" 0)
           echo "  -> ts${ts_idx}: ${cnt} subtitle(s) fall inside the preview window" >&2
         else
           echo "  -> Warning: subtitle extraction failed for ts${ts_idx}; preview plays without subs" >&2
@@ -453,7 +482,6 @@ generate_preview_clip() {
   [ -s "$poster" ] && poster_out="$poster"
   echo "${clip_out}|${sub_json}|${poster_out}"
 }
-
 # ---------------------------------------------------------------------------
 # HELPER: Compute the title font size for a given text length.
 # Mirrors build_menu().
@@ -526,12 +554,13 @@ generate_html_preview() {
   for i in "${!ANALYSIS_TITLES[@]}"; do
     local ts_idx=$((i + 1))
     local video="${ALL_VIDEOS[$i]}"
-    local has_subs="${ANALYSIS_HAS_SUBS[$i]}"
+    local has_subs=$(num_or "${ANALYSIS_HAS_SUBS[$i]:-0}" 0)
+
     local sub_file=""
 
     # Use the subtitle file list discovered during analysis (default track)
     if [ "$has_subs" -eq 1 ]; then
-      local default_idx=$(( ${ANALYSIS_DEFAULTS[$i]} - 64 ))
+      local default_idx=$(( ${ANALYSIS_DEFAULTS[$i]:-62} - 64 ))
       if [ "$default_idx" -ge 0 ] && [ -n "${ANALYSIS_SUB_FILES[$i]:-}" ]; then
         local saved_ifs="$IFS"
         IFS='|' read -ra sub_files <<< "${ANALYSIS_SUB_FILES[$i]}"
@@ -632,10 +661,9 @@ HTMLEOF
   local main_title_size
   main_title_size=$(compute_title_size "${ANALYSIS_TITLES[0]}")
 
-  # "Play movie" -> titleset 1 menu if it has subs, else straight to title
-  # (mirrors VMGM_TARGETS: "jump titleset 1 menu" vs "jump titleset 1 title 1")
+  # "Play movie" -> titleset 1 menu if it has subs, else straight to title (mirrors VMGM_TARGETS: "jump titleset 1 menu" vs "jump titleset 1 title 1")
   local play_target="ts1_movie"
-  [ "${ANALYSIS_HAS_SUBS[0]}" -eq 1 ] && play_target="ts1_menu"
+  [ "$(num_or "${ANALYSIS_HAS_SUBS[0]:-0}" 0)" -eq 1 ] && play_target="ts1_menu"
 
   cat <<HTMLEOF >> "$html_file"
     <div id="vmgm" class="screen menu-screen active">
