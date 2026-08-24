@@ -191,16 +191,36 @@ generate_extras_pgc_xml() {
     pgc_xml+="      <pgc>\n"
     pgc_xml+="        <vob file=\"$page_mpg\" pause=\"inf\" />\n"
 
-    # Regular buttons (content + "Main Menu")
+    # Buttons in unified order: content → pagination → navigation. This MUST match the button order in build_menu's spumux output
+    local btn_idx=0
+    # Content buttons (non-nav labels)
     for i in "${!page_targets[@]}"; do
-      pgc_xml+="        <button name=\"b$i\"> { ${page_targets[$i]} } </button>\n"
+      local is_nav=false
+      if [[ "${page_labels[$i]}" == "Main Menu" ]] || [[ "${page_labels[$i]}" == "Back to Extras" ]]; then
+        is_nav=true
+      fi
+      if [ "$is_nav" = false ]; then
+        pgc_xml+="        <button name=\"b${btn_idx}\"> { ${page_targets[$i]} } </button>\n"
+        btn_idx=$((btn_idx + 1))
+      fi
     done
 
     # Pagination buttons
     for p in $(seq 0 $((pag_num_pairs - 1))); do
-      local btn_idx=$(( ${#page_targets[@]} + p ))
       local pcmd="${LAST_PAG_INFO[cmd_${p}]}"
       pgc_xml+="        <button name=\"b${btn_idx}\"> { $pcmd } </button>\n"
+      btn_idx=$((btn_idx + 1))
+    done
+    # Navigation buttons (Main Menu, Back to Extras) — last so down wraps to first content
+    for i in "${!page_targets[@]}"; do
+      local is_nav=false
+      if [[ "${page_labels[$i]}" == "Main Menu" ]] || [[ "${page_labels[$i]}" == "Back to Extras" ]]; then
+        is_nav=true
+      fi
+      if [ "$is_nav" = true ]; then
+        pgc_xml+="        <button name=\"b${btn_idx}\"> { ${page_targets[$i]} } </button>\n"
+        btn_idx=$((btn_idx + 1))
+      fi
     done
 
     pgc_xml+="      </pgc>\n"
@@ -464,24 +484,70 @@ build_menu() {
 
   local top_margin=$((title_bar_h + 30))
 
-  # ---- Classify buttons into content vs navigation ----
+  # ---- Classify original labels into content vs navigation ----
   local nav_indices=()
-  local content_count=0
   for i in "${!labels[@]}"; do
     if [[ "${labels[$i]}" == "Main Menu" ]] || [[ "${labels[$i]}" == "Back to Extras" ]]; then
       nav_indices+=("$i")
-    else
-      content_count=$((content_count + 1))
     fi
   done
   local nav_count=${#nav_indices[@]}
 
-  # ---- Calculate layout ----
-  # Reserve space at bottom for navigation buttons
-  local nav_zone_y=$((menu_h - 55 * nav_count - 30))
-  [ "$nav_count" -eq 0 ] && nav_zone_y=$((menu_h - 40))
+  # ---- Build unified button order: content → pagination → nav ----
+  # This ensures DVD remote up/down navigation reaches ALL buttons.
+  # Without this, pagination buttons are orphaned from the up/down chain.
+  local ordered_labels=()
+  local ordered_types=()  # "content", "pag", "nav"
 
-  local line_h=$(( (nav_zone_y - top_margin) / content_count ))
+  # Content buttons (non-nav labels)
+  for i in "${!labels[@]}"; do
+    local is_nav=false
+    for ni in "${nav_indices[@]}"; do
+      [ "$i" = "$ni" ] && is_nav=true && break
+    done
+    if [ "$is_nav" = false ]; then
+      ordered_labels+=("${labels[$i]}")
+      ordered_types+=("content")
+    fi
+  done
+  local content_count=${#ordered_labels[@]}
+
+  # Pagination buttons
+  for p in $(seq 0 $((num_pairs - 1))); do
+    local pidx=$(( p * 2 ))
+    ordered_labels+=("${vmgm_pairs[$pidx]}")
+    ordered_types+=("pag")
+  done
+  local pag_count=$num_pairs
+
+  # Navigation buttons (last, so pressing down from nav wraps to first content)
+  for ni in "${nav_indices[@]}"; do
+    ordered_labels+=("${labels[$ni]}")
+    ordered_types+=("nav")
+  done
+
+  local total_buttons=${#ordered_labels[@]}
+
+  # ---- Calculate layout zones ----
+  # Nav zone at the very bottom
+  local nav_line_h=50
+  local nav_zone_h=$(( nav_line_h * nav_count + 10 ))
+  [ "$nav_count" -eq 0 ] && nav_zone_h=0
+  local nav_zone_y=$((menu_h - nav_zone_h - 20 ))
+
+  # Pagination zone directly above nav zone
+  local pag_line_h=50
+  local pag_zone_h=$(( pag_line_h * pag_count + 10 ))
+  [ "$pag_count" -eq 0 ] && pag_zone_h=0
+  local pag_zone_y=$((nav_zone_y - pag_zone_h ))
+  [ "$pag_count" -eq 0 ] && pag_zone_y=$nav_zone_y
+
+  # Content zone fills from top_margin down to the top of the pag/nav area
+  local content_zone_end=$pag_zone_y
+  [ "$pag_count" -eq 0 ] && content_zone_end=$nav_zone_y
+
+  local line_h=$(( (content_zone_end - top_margin) / content_count ))
+  [ "$content_count" -eq 0 ] && line_h=50
   [ "$line_h" -gt 70 ] && line_h=70
   [ "$line_h" -lt $((MIN_POINT_SIZE + 6)) ] && line_h=$((MIN_POINT_SIZE + 6))
 
@@ -499,15 +565,21 @@ build_menu() {
   # Navigation button styling
   local nav_point_size=$((point_size - 2))
   [ "$nav_point_size" -lt "$MIN_POINT_SIZE" ] && nav_point_size=$MIN_POINT_SIZE
-  local nav_line_h=50
-  local nav_left_margin=$((menu_w / 4))  # Indented more for visual distinction
 
+  # Pagination button styling
+  local pag_ps=$((point_size - 2))
+  [ "$pag_ps" -lt "$MIN_POINT_SIZE" ] && pag_ps=$MIN_POINT_SIZE
+
+  # All buttons left-aligned at the same margin
   local left_margin=$(( menu_w / 6 ))
   local right_margin=$(( menu_w / 20 ))
 
   # ---- Overflow warnings ----
-  if [ "$content_count" -gt 0 ] && [ $((top_margin + content_count * line_h)) -gt "$nav_zone_y" ]; then
+  if [ "$content_count" -gt 0 ] && [ $((top_margin + content_count * line_h)) -gt "$content_zone_end" ]; then
     echo "WARNING: menu '$title_text' content area may overflow." >&2
+  fi
+  if [ "$pag_count" -gt 0 ] && [ $((pag_zone_y + pag_count * pag_line_h)) -gt "$nav_zone_y" ]; then
+    echo "WARNING: menu '$title_text' pagination area may overflow." >&2
   fi
   if [ "$nav_count" -gt 0 ] && [ $((nav_zone_y + nav_count * nav_line_h)) -gt "$menu_h" ]; then
     echo "WARNING: menu '$title_text' navigation area may overflow." >&2
@@ -515,19 +587,12 @@ build_menu() {
 
   echo "  -> Building Menu: $title_text"
   echo "     Target: ${menu_w}x${menu_h} (${DETECTED_FORMAT^^})"
-  echo "     Layout: $num_items content + $num_pairs pagination = $total_buttons buttons @ ${point_size}pt (title @ ${title_size}pt)"
+  echo "     Layout: $content_count content + $pag_count pagination + $nav_count nav = $total_buttons buttons @ ${point_size}pt (title @ ${title_size}pt)"
   [ "$is_extras_menu" = true ] && echo "     (Extras menu: reduced font)"
   echo "     Buttons:"
-  for i in "${!labels[@]}"; do
-    local tag=""
-    for ni in "${nav_indices[@]}"; do
-      [ "$i" = "$ni" ] && tag=" [NAV]" && break
-    done
-    printf "       %d - %s%s\n" "$i" "${labels[$i]}" "$tag"
-  done
-  for p in $(seq 0 $((num_pairs - 1))); do
-    local pidx=$(( p * 2 ))
-    printf "       %d - %s [PAGINATION]\n" "$((num_items + p))" "${vmgm_pairs[$pidx]}"
+  for i in "${!ordered_labels[@]}"; do
+    local tag="[${ordered_types[$i]}]"
+    printf "       %d - %s %s\n" "$i" "${ordered_labels[$i]}" "$tag"
   done
   echo "+-- Muxing menu stream..."
 
@@ -584,138 +649,99 @@ build_menu() {
     [ "$line2_size" -lt "$MIN_POINT_SIZE" ] && line2_size=$MIN_POINT_SIZE
     run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg0b.log" convert "${pfx}_bg.png" -gravity "$title_gravity" -fill "#9999bb" -font "$FONT" -pointsize "$line2_size" -annotate +0+$(( title2_y + line2_size / 2 - center_y )) "$title_line2" "${pfx}_bg_tmp.png" && mv "${pfx}_bg_tmp.png" "${pfx}_bg.png"
   fi
+
   # Separator line before navigation buttons
   if [ "$nav_count" -gt 0 ]; then
-    local nav_sep_y=$((nav_zone_y - 15))
+    local nav_sep_y=$((nav_zone_y - 10))
     run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg0c.log" convert "${pfx}_bg.png" -fill "#333355" -draw "rectangle $((left_margin - 10)),${nav_sep_y} $((menu_w - left_margin + 10)),$((nav_sep_y + 1))" "${pfx}_bg_tmp.png" && mv "${pfx}_bg_tmp.png" "${pfx}_bg.png"
   fi
 
   # ---- Build highlight overlay (transparent, only button text) ----
   run_logged "$LOG_DIR/$(basename "$pfx")_convert_hl0.log" convert -size "${menu_w}x${menu_h}" xc:none "${pfx}_hl.png"
-    # ---- Draw all content + nav buttons ----
-    local y0_arr=() y1_arr=() x0_arr=() x1_arr=()
-    local current_y=$top_margin
-    local nav_drawn=0
-    local center_y=$(( menu_h / 2 ))
-    local center_x=$(( menu_w / 2 ))
 
-    # Button alignment: "left" (default) or "center"
-    # Set MENU_BUTTON_ALIGN=center before calling to enable center alignment
-    local btn_align="${MENU_BUTTON_ALIGN:-left}"
+  # ---- Draw all buttons in unified order: content → pagination → nav ----
+  local y0_arr=() y1_arr=() x0_arr=() x1_arr=()
+  local current_y=$top_margin
+  local pag_drawn=0
+  local nav_drawn=0
+  local center_x=$(( menu_w / 2 ))
 
-    for i in "${!labels[@]}"; do
-      local text="${labels[$i]}"
-      local is_nav=false
-      for ni in "${nav_indices[@]}"; do
-        [ "$i" = "$ni" ] && is_nav=true && break
-      done
+  # Button alignment: "left" (default) or "center"
+  local btn_align="${MENU_BUTTON_ALIGN:-left}"
 
-      local this_left this_y this_ps this_color
-      if [ "$is_nav" = true ]; then
-        # Navigation button: gold color, indented, separate zone
-        this_left=$nav_left_margin
-        this_y=$((nav_zone_y + nav_drawn * nav_line_h))
-        this_ps=$nav_point_size
-        this_color="#ffcc44"
-        nav_drawn=$((nav_drawn + 1))
-      else
-        # Content button: white, normal position
-        this_left=$left_margin
-        this_y=$current_y
-        this_ps=$point_size
-        this_color="white"
-        current_y=$((current_y + line_h))
-      fi
+  for i in "${!ordered_labels[@]}"; do
+    local text="${ordered_labels[$i]}"
+    local btype="${ordered_types[$i]}"
 
-      # Truncate text if too long
-      local max_chars=$(( (menu_w - this_left - right_margin) * 10 / (this_ps * 6) ))
-      [ "$max_chars" -lt 4 ] && max_chars=4
-      if [ "${#text}" -gt "$max_chars" ]; then
-        text="${text:0:$((max_chars - 1))}…"
-      fi
+    local this_left this_y this_ps this_color
+    if [ "$btype" = "nav" ]; then
+      # Navigation button: gold color, same left margin as content
+      this_left=$left_margin
+      this_y=$((nav_zone_y + nav_drawn * nav_line_h))
+      this_ps=$nav_point_size
+      this_color="#ffcc44"
+      nav_drawn=$((nav_drawn + 1))
+    elif [ "$btype" = "pag" ]; then
+      # Pagination button: cyan color, same left margin as content
+      this_left=$left_margin
+      this_y=$((pag_zone_y + pag_drawn * pag_line_h))
+      this_ps=$pag_ps
+      this_color="#66ccff"
+      pag_drawn=$((pag_drawn + 1))
+    else
+      # Content button: white, normal position
+      this_left=$left_margin
+      this_y=$current_y
+      this_ps=$point_size
+      this_color="white"
+      current_y=$((current_y + line_h))
+    fi
 
-      # Store button bounds for spumux
-      y0_arr[$i]=$((this_y - 5))
-      y1_arr[$i]=$((this_y + this_ps + 5))
-      x0_arr[$i]=$((this_left - 20))
-      x1_arr[$i]=$((menu_w - left_margin))
+    # Truncate text if too long
+    local max_chars=$(( (menu_w - this_left - right_margin) * 10 / (this_ps * 6) ))
+    [ "$max_chars" -lt 4 ] && max_chars=4
+    if [ "${#text}" -gt "$max_chars" ]; then
+      text="${text:0:$((max_chars - 1))}…"
+    fi
 
-      # Calculate annotation position based on alignment
-      local annot_gravity x_off y_off
-      if [ "$btn_align" = "center" ]; then
+    # Store button bounds for spumux
+    y0_arr[$i]=$((this_y - 5))
+    y1_arr[$i]=$((this_y + this_ps + 5))
+    x0_arr[$i]=$((this_left - 20))
+    x1_arr[$i]=$((menu_w - left_margin))
+
+    # Calculate annotation position based on alignment
+    local annot_gravity x_off y_off
+    if [ "$btn_align" = "center" ]; then
         # Center-aligned within button area
-        annot_gravity="center"
-        local btn_center_x=$(( (this_left + menu_w - left_margin) / 2 ))
-        local btn_center_y=$(( this_y + this_ps / 2 ))
-        x_off=$(( btn_center_x - center_x ))
-        y_off=$(( btn_center_y - center_y ))
-      else
-        # Left-aligned: use West gravity so x offset is from left edge
-        annot_gravity="West"
-        x_off=$this_left
-        y_off=$(( this_y - center_y ))
-      fi
+      annot_gravity="center"
+      local btn_center_x=$(( (this_left + menu_w - left_margin) / 2 ))
+      local btn_center_y=$(( this_y + this_ps / 2 ))
+      x_off=$(( btn_center_x - center_x ))
+      y_off=$(( btn_center_y - center_y ))
+    else
+      # Left-aligned: use West gravity so x offset is from left edge
+      annot_gravity="West"
+      x_off=$this_left
+      y_off=$(( this_y - center_y ))
+    fi
 
-      # Draw on background
-      run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg${i}.log" \
-        convert "${pfx}_bg.png" \
-          -gravity "$annot_gravity" -fill "$this_color" -font "$FONT" -pointsize "$this_ps" \
-          -annotate +${x_off}+${y_off} "$text" \
-          "${pfx}_bg_tmp.png" && mv "${pfx}_bg_tmp.png" "${pfx}_bg.png"
+    # Draw on background
+    run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg${i}.log" \
+      convert "${pfx}_bg.png" \
+        -gravity "$annot_gravity" -fill "$this_color" -font "$FONT" -pointsize "$this_ps" \
+        -annotate +${x_off}+${y_off} "$text" \
+        "${pfx}_bg_tmp.png" && mv "${pfx}_bg_tmp.png" "${pfx}_bg.png"
 
-      # Draw on highlight overlay (red fill + blue stroke for spumux 3-color mask)
-      run_logged "$LOG_DIR/$(basename "$pfx")_convert_hl${i}.log" \
-        convert "${pfx}_hl.png" +antialias \
-          -gravity "$annot_gravity" -fill red -stroke blue -strokewidth 1 -font "$FONT" -pointsize "$this_ps" \
-          -annotate +${x_off}+${y_off} "$text" \
-          -colors 3 \
-          "${pfx}_hl_tmp.png" && mv "${pfx}_hl_tmp.png" "${pfx}_hl.png"
-    done
+    # Draw on highlight overlay (red fill + blue stroke for spumux 3-color mask)
+    run_logged "$LOG_DIR/$(basename "$pfx")_convert_hl${i}.log" \
+      convert "${pfx}_hl.png" +antialias \
+        -gravity "$annot_gravity" -fill red -stroke blue -strokewidth 1 -font "$FONT" -pointsize "$this_ps" \
+        -annotate +${x_off}+${y_off} "$text" \
+        -colors 3 \
+        "${pfx}_hl_tmp.png" && mv "${pfx}_hl_tmp.png" "${pfx}_hl.png"
+  done
 
-  # ---- Draw pagination buttons (always centered within their slots) ----
-  if [ "$num_pairs" -gt 0 ]; then
-    local pag_y=$((menu_h - 40))
-    local pag_total_w=$(( num_pairs * 160 ))
-    local pag_start_x=$(( (menu_w - pag_total_w) / 2 ))
-    local pag_ps=$(( point_size - 2 ))
-    [ "$pag_ps" -lt "$MIN_POINT_SIZE" ] && pag_ps=$MIN_POINT_SIZE
-
-    for p in $(seq 0 $((num_pairs - 1))); do
-      local pidx=$(( p * 2 ))
-      local ptxt="${vmgm_pairs[$pidx]}"
-      local pcmd="${vmgm_pairs[$((pidx + 1))]}"
-      local btn_global_idx=$((num_items + p))
-
-      local px=$(( pag_start_x + p * 160 ))
-      # Center of each 160px slot
-      local ptx=$(( px + 80 ))
-
-      y0_arr[$btn_global_idx]=$((pag_y - 5))
-      y1_arr[$btn_global_idx]=$((pag_y + pag_ps + 5))
-      x0_arr[$btn_global_idx]=$((px - 10))
-      x1_arr[$btn_global_idx]=$((px + 150))
-
-      # Pagination buttons are always centered within their slot
-      local pag_btn_center_y=$(( pag_y + pag_ps / 2 ))
-      local pag_x_offset=$(( ptx - center_x ))
-      local pag_y_offset=$(( pag_btn_center_y - center_y ))
-
-      # Draw on background (cyan-ish for pagination)
-      run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg_pag${p}.log" \
-        convert "${pfx}_bg.png" \
-          -gravity center -fill "#66ccff" -font "$FONT" -pointsize "$pag_ps" \
-          -annotate +${pag_x_offset}+${pag_y_offset} "$ptxt" \
-          "${pfx}_bg_tmp.png" && mv "${pfx}_bg_tmp.png" "${pfx}_bg.png"
-
-      # Draw on highlight overlay
-      run_logged "$LOG_DIR/$(basename "$pfx")_convert_hl_pag${p}.log" \
-        convert "${pfx}_hl.png" +antialias \
-          -gravity center -fill red -stroke blue -strokewidth 1 -font "$FONT" -pointsize "$pag_ps" \
-          -annotate +${pag_x_offset}+${pag_y_offset} "$ptxt" \
-          -colors 3 \
-          "${pfx}_hl_tmp.png" && mv "${pfx}_hl_tmp.png" "${pfx}_hl.png"
-    done
-  fi
   # ---- Generate blank menu video ----
   run_logged "$LOG_DIR/$(basename "$pfx")_ffmpeg_blank.log" \
     ffmpeg -y -f lavfi -i "color=c=black:s=${menu_w}x${menu_h}:d=${MENU_SECONDS}:r=${FPS}" \
@@ -732,19 +758,15 @@ build_menu() {
             -b:v 6000k -maxrate 9000k -minrate 6000k -bufsize 1835k \
             "${pfx}_merged.mpg"
 
-  # ---- Generate spumux XML ----
+  # ---- Generate spumux XML (single loop over unified button order) ----
   {
     echo '<subpictures><stream>'
     # Add end="9999" so buttons don't disappear when the menu video loops
     echo "  <spu start=\"0\" end=\"9999\" force=\"yes\" highlight=\"${pfx}_hl.png\" select=\"${pfx}_hl.png\">"
-    for i in "${!labels[@]}"; do
-      local up=$(( (i - 1 + num_items) % num_items ))
-      local down=$(( (i + 1) % num_items ))
+    for i in "${!ordered_labels[@]}"; do
+      local up=$(( (i - 1 + total_buttons) % total_buttons ))
+      local down=$(( (i + 1) % total_buttons ))
       echo "    <button name=\"b$i\" x0=\"${x0_arr[$i]}\" y0=\"${y0_arr[$i]}\" x1=\"${x1_arr[$i]}\" y1=\"${y1_arr[$i]}\" up=\"b$up\" down=\"b$down\" />"
-    done
-    for p in $(seq 0 $((num_pairs - 1))); do
-      local btn_global_idx=$((num_items + p))
-      echo "    <button name=\"b${btn_global_idx}\" x0=\"${x0_arr[$btn_global_idx]}\" y0=\"${y0_arr[$btn_global_idx]}\" x1=\"${x1_arr[$btn_global_idx]}\" y1=\"${y1_arr[$btn_global_idx]}\" up=\"b$(( (btn_global_idx - 1 + total_buttons) % total_buttons ))\" down=\"b$(( (btn_global_idx + 1) % total_buttons ))\" />"
     done
     echo '  </spu>'
     echo '</stream></subpictures>'
@@ -756,21 +778,7 @@ build_menu() {
 
   [ -s "$out_mpg" ] || { echo "ERROR: spumux produced an empty/missing menu video: $out_mpg" >&2; exit 1; }
 
-  # # Export pagination info for caller to use in dvdauthor XML. We use a sidecar file since bash functions can't return arrays cleanly
-  # # M: we set the global value LAST_PAG_INFO instead
-  # if [ "$num_pairs" -gt 0 ]; then
-  #   {
-  #     echo "NUM_ITEMS=$num_items"
-  #     echo "NUM_PAIRS=$num_pairs"
-  #     for p in $(seq 0 $((num_pairs - 1))); do
-  #       local pidx=$(( p * 2 ))
-  #       echo "PAG_LABEL_${p}=\"${vmgm_pairs[$pidx]}\""
-  #       echo "PAG_CMD_${p}=\"${vmgm_pairs[$((pidx + 1))]}\""
-  #     done
-  #   } > "${pfx}_paginfo.sh"
-  # else
-  #   : > "${pfx}_paginfo.sh"
-  # fi
+  # Export pagination info for caller to use in dvdauthor XML
   if [ "$num_pairs" -gt 0 ]; then
     LAST_PAG_INFO[num_items]="$num_items"
     LAST_PAG_INFO[num_pairs]="$num_pairs"
