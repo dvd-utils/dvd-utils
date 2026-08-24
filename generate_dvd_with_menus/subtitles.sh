@@ -53,39 +53,44 @@ discover_subs() {
   # done
   # This completely eliminates the need for separate spaceless globs, handles _pal vs _PAL automatically, and makes the suffix extraction much easier because you can just compare the normalized strings to find exactly where the video name ends and the language suffix begins. Just an idea.
   local raw_sub_files=(
-    "${base_path}.srt"
     "${base_path}_"*.srt
     "${base_path}_"*.idx
     "${base_path}_"*.sub.idx
     "${base_path}_"*.sup
     "${base_path}."*.srt
   )
+  # Conditionally add the exact .srt match to avoid bypassing nullglob
+  [ -f "${base_path}.srt" ] && raw_sub_files+=( "${base_path}.srt" )
   if [ "$base_path" != "$base_clean" ]; then
     raw_sub_files+=(
-      "${base_clean}.srt"
       "${base_clean}_"*.srt
       "${base_clean}_"*.idx
       "${base_clean}_"*.sub.idx
       "${base_clean}_"*.sup
       "${base_clean}."*.srt
     )
+    [ -f "${base_clean}.srt" ] && raw_sub_files+=( "${base_clean}.srt" )
   fi
   # Add spaceless variants if they differ from the originals
   if [ "$base_path" != "$base_path_no_space" ]; then
     raw_sub_files+=(
-      "${base_path_no_space}"_*.idx
-      "${base_path_no_space}"_*.sub.idx
-      "${base_path_no_space}"_*.sup
-      "${base_path_no_space}".*.srt
+      "${base_path_no_space}_"*.srt
+      "${base_path_no_space}_"*.idx
+      "${base_path_no_space}_"*.sub.idx
+      "${base_path_no_space}_"*.sup
+      "${base_path_no_space}."*.srt
     )
+    [ -f "${base_path_no_space}.srt" ] && raw_sub_files+=( "${base_path_no_space}.srt" )
   fi
   if [ "$base_clean" != "$base_clean_no_space" ]; then
     raw_sub_files+=(
-      "${base_clean_no_space}"_*.idx
-      "${base_clean_no_space}"_*.sub.idx
-      "${base_clean_no_space}"_*.sup
-      "${base_clean_no_space}".*.srt
+      "${base_clean_no_space}_"*.srt
+      "${base_clean_no_space}_"*.idx
+      "${base_clean_no_space}_"*.sub.idx
+      "${base_clean_no_space}_"*.sup
+      "${base_clean_no_space}."*.srt
     )
+    [ -f "${base_clean_no_space}.srt" ] && raw_sub_files+=( "${base_clean_no_space}.srt" )
   fi
   shopt -u nullglob
   if [ ${#raw_sub_files[@]} -eq 0 ]; then
