@@ -335,10 +335,21 @@ mux_subs() {
       cat > "${pfx}.xml" <<EOF
 <subpictures>
   <stream>
-    <textsub filename="${stage_srt}" characterset="UTF-8" movie-fps="${FPS}" movie-width="${WIDTH}" movie-height="${HEIGHT}" />
+    <textsub filename="${stage_srt}"
+             characterset="UTF-8"
+             movie-fps="${FPS}"
+             movie-width="${WIDTH}"
+             movie-height="${HEIGHT}"
+             horizontal-alignment="center"
+             bottom-margin="20"
+             fontsize="26"
+             outline-thickness="2"
+             fill-color="#FFFFFF"
+             outline-color="#000000"/>
   </stream>
 </subpictures>
 EOF
+      # shadow-offset="1 1" shadow-color="#404040"
       echo "     Muxing text subtitle into video..."
       local next_vid="$WORK_DIR/ts${ts_idx}_mux_${i}.mpg"
       run_logged "$LOG_DIR/ts${ts_idx}_spumux_${i}.log" \
