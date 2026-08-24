@@ -319,7 +319,6 @@ mux_subs() {
     local pfx="$WORK_DIR/ts${ts_idx}_sub_${i}"
     local stage_base="$WORK_DIR/ts${ts_idx}_sub_${i}_input"
     local label="${CURRENT_SUB_LABELS[$i]}"
-    
     echo "  -> Muxing Subtitle $((i+1))/${#input_files[@]}: $label"
     # .srt is plain text and has no bitmap frames to render via bdsup2sub; spumux can burn text subtitles directly via its <textsub> element, so we skip straight to building a textsub XML and hand it to spumux.
     if [[ "$f" == *.srt ]]; then
@@ -334,7 +333,9 @@ mux_subs() {
 EOF
       echo "     Muxing text subtitle into video..."
       local next_vid="$WORK_DIR/ts${ts_idx}_mux_${i}.mpg"
-      run_logged "$LOG_DIR/ts${ts_idx}_spumux_${i}.log" bash -c "spumux -s '$i' '${pfx}.xml' < '$current_vid' > '$next_vid'"
+      run_logged "$LOG_DIR/ts${ts_idx}_spumux_${i}.log" \
+          bash -c 'spumux -s "$1" "$2" < "$3" > "$4"' \
+          _ "$i" "${pfx}.xml" "$current_vid" "$next_vid"
       [ -s "$next_vid" ] || { echo "ERROR: spumux produced an empty output muxing subtitle track $i into $(basename "$in_mpg")." >&2; exit 1; }
       current_vid="$next_vid"
       continue
@@ -441,7 +442,8 @@ EOF
     local next_vid="$WORK_DIR/ts${ts_idx}_mux_${i}.mpg"
     # Mux directly using the generated DVDAuthor-formatted XML
     run_logged "$LOG_DIR/ts${ts_idx}_spumux_${i}.log" \
-      bash -c "spumux -s '$i' '${pfx}.xml' < '$current_vid' > '$next_vid'"
+      bash -c 'spumux -s "$1" "$2" < "$3" > "$4"' \
+      _ "$i" "${pfx}.xml" "$current_vid" "$next_vid"
 
     [ -s "$next_vid" ] || { echo "ERROR: spumux produced an empty output muxing subtitle track $i into $(basename "$in_mpg")." >&2; exit 1; }
     current_vid="$next_vid"

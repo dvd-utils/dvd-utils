@@ -235,7 +235,19 @@ build_menu() {
     menu_h=480
   fi
 
-  local top_margin=100
+  # Dynamic title font sizing (shrink for long titles like extras)
+  local title_size=42
+  if [ ${#title_text} -gt 30 ]; then title_size=36; fi
+  if [ ${#title_text} -gt 45 ]; then title_size=30; fi
+  if [ ${#title_text} -gt 60 ]; then title_size=26; fi
+  if [ ${#title_text} -gt 80 ]; then title_size=22; fi
+  [ "$title_size" -lt "$MIN_POINT_SIZE" ] && title_size=$MIN_POINT_SIZE
+
+  # Layout geometry
+  local top_margin=120
+  if [ "$DETECTED_FORMAT" = "ntsc" ]; then
+    top_margin=100
+  fi
   local line_h=$(( (menu_h - top_margin - 60) / num_items ))
   [ "$line_h" -gt 70 ] && line_h=70
   [ "$line_h" -lt $((MIN_POINT_SIZE + 6)) ] && line_h=$((MIN_POINT_SIZE + 6))
@@ -250,18 +262,32 @@ build_menu() {
   fi
   echo "  -> Building Menu: $title_text"
   echo "     Target: ${menu_w}x${menu_h} (${DETECTED_FORMAT^^})"
-  echo "     Layout: $num_items items @ ${point_size}pt"
+  echo "     Layout: $num_items items @ ${point_size}pt (title @ ${title_size}pt)"
   echo "     Buttons:"
   for i in "${!labels[@]}"; do
     printf "       %d - %s\n" "$i" "${labels[$i]}"
   done
   echo "+-- Muxing menu stream..."
+  # Truncate title if too long for available width
+  local title_max_chars=$(( (menu_w - 2 * left_margin) * 10 / (title_size * 6) ))
+  [ "$title_max_chars" -lt 10 ] && title_max_chars=10
+  if [ "${#title_text}" -gt "$title_max_chars" ]; then
+    title_text="${title_text:0:$((title_max_chars - 1))}…"
+  fi
+  # Build background with title bar + separator for visual hierarchy
+  local title_bar_h=$((top_margin - 15))
+  local sep_y1=$title_bar_h
+  local sep_y2=$((title_bar_h + 3))
+
   run_logged "$LOG_DIR/$(basename "$pfx")_convert_bg0.log" \
     convert -size "${menu_w}x${menu_h}" xc:black \
-      -gravity NorthWest -fill white -font "$FONT" -pointsize 42 \
-      -annotate +${left_margin}+$((top_margin - 60)) "$title_text" \
+      -fill "#1a1a2e" -draw "rectangle 0,0 ${menu_w},${title_bar_h}" \
+      -gravity NorthWest -fill white -font "$FONT" -pointsize "$title_size" \
+      -annotate +${left_margin}+$((top_margin - 70)) "$title_text" \
+      -fill "#555555" -draw "rectangle 0,${sep_y1} ${menu_w},${sep_y2}" \
       "${pfx}_bg.png"
 
+  # Build highlight overlay (transparent, only button text)
   run_logged "$LOG_DIR/$(basename "$pfx")_convert_hl0.log" \
     convert -size "${menu_w}x${menu_h}" xc:none "${pfx}_hl.png"
 
@@ -344,9 +370,7 @@ append_titleset_xml() {
   local ts_idx="$1"
   local title_pretty="$2"
 
-  # Snapshot the globals set by [discover_subs]/[mux_subs] for this titleset,
-  # since build_menu() below will call other helpers that could otherwise
-  # clobber CURRENT_* before we're done using them.
+  # Snapshot the globals set by [discover_subs]/[mux_subs] for this titleset, since build_menu() below will call other helpers that could otherwise clobber CURRENT_* before we're done using them.
   local has_subs="$CURRENT_HAS_SUBS"
   local muxed_mpg="$CURRENT_MUXED_MPG"
   local default_subp="$CURRENT_DEFAULT_SUBP"
@@ -356,8 +380,13 @@ append_titleset_xml() {
 
   if [ "$has_subs" -eq 1 ]; then
     local menu_mpg="$WORK_DIR/ts${ts_idx}_menu.mpg"
-    # TODO "Extras Menu" / "Main Menu"?
-    local labels=("${sub_labels[@]}" "No subtitles" "Main Menu")
+    # Build labels: subtitle options + navigation buttons
+    local labels=("${sub_labels[@]}" "No subtitles")
+    # Add "Back to Extras" for extra titlesets (ts_idx > 1 means it's an extra)
+    if [ "$ts_idx" -gt 1 ]; then
+      labels+=("Back to Extras")
+    fi
+    labels+=("Main Menu")
 
     local menu_title="Subtitles: ${title_pretty}"
     [ "$ts_idx" -eq 1 ] && menu_title="Movie Subtitles"
@@ -365,7 +394,8 @@ append_titleset_xml() {
     build_menu "$menu_mpg" "$menu_title" "${labels[@]}"
 
     XML_TITLESETS+="    <menus lang=\"en\">\n      <video format=\"${DETECTED_FORMAT}\" resolution=\"${WIDTH}x${HEIGHT}\" />\n"
-    XML_TITLESETS+="      <pgc entry=\"root,subtitle\" pause=\"inf\">\n        <vob file=\"$menu_mpg\" />\n"
+    # pause="inf" on <vob> holds the still-frame indefinitely. This prevents the cell from looping after MENU_SECONDS, which was causing the DVD VM to reset the button highlight state (visual selection lost).
+    XML_TITLESETS+="      <pgc entry=\"root,subtitle\">\n        <vob file=\"$menu_mpg\" pause=\"inf\" />\n"
     local btn_idx=0
     for i in "${!sub_labels[@]}"; do
       local val=$((64 + i))
@@ -377,6 +407,13 @@ append_titleset_xml() {
     # Set g2 = 1 for "No subtitles" as well
     XML_TITLESETS+="        <button name=\"b$btn_idx\"> { subtitle = 62; g2 = 1; if (g1 eq 1) resume; else jump titleset $ts_idx title 1; } </button>\n"
     btn_idx=$((btn_idx+1))
+
+    # "Back to Extras" button (only for extras, ts_idx > 1) which jumps to PGC 2 in the VMGM, which is the Extras Menu.
+    if [ "$ts_idx" -gt 1 ]; then
+      XML_TITLESETS+="        <button name=\"b$btn_idx\"> { g1 = 0; g2 = 0; jump vmgm menu 2; } </button>\n"
+      btn_idx=$((btn_idx+1))
+    fi
+
     XML_TITLESETS+="        <button name=\"b$btn_idx\"> { g1 = 0; g2 = 0; jump vmgm menu entry title; } </button>\n"
 
     # Explicitly specify the titleset index for the jump
@@ -585,9 +622,10 @@ printf '  <vmgm>\n' >> "$XML_FILE"
 printf '    <fpc>\n      { g1 = 0; g2 = 0; subtitle = %d; %s }\n    </fpc>\n' "$MAIN_DEFAULT_SUBP" "$FPC_JUMP" >> "$XML_FILE"
 printf '    <menus>\n      <video format="%s" resolution="%sx%s" />\n' "$DETECTED_FORMAT" "$WIDTH" "$HEIGHT" >> "$XML_FILE"
 
+# pause="inf" on <vob> for all menu PGCs ensures that the still-frame holds indefinitely and prevents the cell from looping, which was causing the button highlight (visual selection) to be reset after MENU_SECONDS elapsed.
 # PGC 1: Main Menu
-printf '      <pgc entry="title" pause="inf">\n' >> "$XML_FILE"
-printf '        <vob file="%s" />\n' "$VMGM_MPG" >> "$XML_FILE"
+printf '      <pgc entry="title">\n' >> "$XML_FILE"
+printf '        <vob file="%s" pause="inf" />\n' "$VMGM_MPG" >> "$XML_FILE"
 for i in "${!VMGM_TARGETS[@]}"; do
   printf '        <button name="b%i"> { %s } </button>\n' "$i" "${VMGM_TARGETS[$i]}" >> "$XML_FILE"
 done
@@ -595,8 +633,8 @@ printf '      </pgc>\n' >> "$XML_FILE"
 
 # PGC 2: Extras Menu (only if extras exist)
 if [ -n "$VMGM_EXTRAS_MPG" ]; then
-  printf '      <pgc pause="inf">\n' >> "$XML_FILE"
-  printf '        <vob file="%s" />\n' "$VMGM_EXTRAS_MPG" >> "$XML_FILE"
+  printf '      <pgc>\n' >> "$XML_FILE"
+  printf '        <vob file="%s" pause="inf" />\n' "$VMGM_EXTRAS_MPG" >> "$XML_FILE"
   for i in "${!EXTRAS_MENU_TARGETS[@]}"; do
     printf '        <button name="b%i"> { %s } </button>\n' "$i" "${EXTRAS_MENU_TARGETS[$i]}" >> "$XML_FILE"
   done
