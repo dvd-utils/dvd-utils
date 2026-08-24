@@ -33,6 +33,11 @@ EXTRAS_VMGM_PGCS=()
 # ---------------------------------------------------------------------------
 # HELPER: Generate XML chunk for a single Titleset
 # ---------------------------------------------------------------------------
+# Optional 5th+ args: pairs of  "label" "vmgm_command"  used by extras
+#   pagination to wire "Next page" / "Prev page" buttons.
+#   When extra_vmgm_pairs are provided, this menu lives in the VMGM and
+#   those button actions are appended to the label list automatically.
+# ---------------------------------------------------------------------------
 append_titleset_xml() {
   local ts_idx="$1"
   local title_pretty="$2"
@@ -120,7 +125,8 @@ append_titleset_xml() {
 # ---------------------------------------------------------------------------
 generate_extras_pgc_xml() {
   local extras_labels=("$@")
-  EXTRAS_VMGM_PGCS=()  # Reset array
+  # Reset array of PGC XML blocks for the <vmgm><menus> section
+  EXTRAS_VMGM_PGCS=()
 
   if [ ${#extras_labels[@]} -eq 0 ]; then
     return

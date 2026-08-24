@@ -101,10 +101,12 @@ source "$SCRIPT_DIR/subtitles.sh"
 source "$SCRIPT_DIR/html_preview.sh"
 source "$SCRIPT_DIR/detect_dvd_format.sh"
 source "$SCRIPT_DIR/dvd_xml.sh"
+
 need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing required tool: $1" >&2; exit 1; }; }
 
 # ----------------------------- TOOL CHECKS ----------------------------------
-# TODO notify user we need to `apt install ffmpeg` etc...
+for t in dvdauthor spumux ffmpeg ffprobe convert; do need "$t"; done
+
 # ---------------------------------------------------------------------------
 # BDSUP2SUB TOOL RESOLUTION
 # ---------------------------------------------------------------------------
@@ -169,8 +171,6 @@ if [ ${#BDSUP2SUB_CMD[@]} -eq 0 ]; then
 fi
 echo "Using subtitle converter: ${BDSUP2SUB_CMD[*]}"
 # ----------------------------------------------------------------------------
-
-for t in dvdauthor spumux ffmpeg ffprobe convert; do need "$t"; done
 
 # Define fallback fonts (prefer condensed/narrow variants for tighter menu text)
 FALLBACK_FONTS=(
@@ -280,7 +280,6 @@ resolve_menu_background() {
     local dr=$(( r * 40 / 100 ))
     local dg=$(( g * 40 / 100 ))
     local db=$(( b * 40 / 100 ))
-
     local menu_w=720 menu_h=576
     [ "$DETECTED_FORMAT" = "ntsc" ] && menu_h=480
     local title_bar_h=80
@@ -719,7 +718,7 @@ build_menu() {
     echo '</stream></subpictures>'
   } > "${pfx}_btn.xml"
 
-  # ---- Mux highlights with spumux ----
+  # Mux highlights with spumux
   run_logged "$LOG_DIR/$(basename "$pfx")_spumux.log" \
     bash -c "spumux -m dvd '${pfx}_btn.xml' < '${pfx}_merged.mpg' > '$out_mpg'"
 
@@ -741,9 +740,8 @@ build_menu() {
   fi
 }
 
-
 # ===========================================================================
-# ANALYSIS (ffprobe + filesystem scans only; no bdsup2sub, no spumux, no ffmpeg encoding, no dvdauthor)
+# ANALYSIS (ffprobe + filesystem scans only)
 # ===========================================================================
 
 echo ""
@@ -935,95 +933,9 @@ echo " Generating VMGM Root Menu..."
 VMGM_MPG="$WORK_DIR/vmgm_menu.mpg"
 build_menu "$VMGM_MPG" "$movie_name_pretty" "${VMGM_LABELS[@]}"
 
-# ---------------------------------------------------------------------------
-# Generate paginated Extras Menus
-# ---------------------------------------------------------------------------
-# Each page holds at most EXTRAS_PER_PAGE items. If there are multiple pages,
-# "Next page" / "Prev page" buttons are added as VMGM-pair buttons that
-# jump to the appropriate VMGM PGC.
-#
-# VMGM PGC layout:
-#   PGC 1 = Main Menu (already generated above)
-#   PGC 2 = Extras Page 1  (or the only extras page)
-#   PGC 3 = Extras Page 2  (if needed)
-#   ...
-#   PGC N = Extras Page N-1
-# ---------------------------------------------------------------------------
-EXTRAS_VMGM_PGCS=()  # array of PGC XML blocks for the <vmgm><menus> section
-
-if [ ${#EXTRAS_MENU_LABELS[@]} -gt 0 ]; then
-  local_num_extras=${#EXTRAS_MENU_LABELS[@]}
-  local_num_pages=$(( (local_num_extras + EXTRAS_PER_PAGE - 1) / EXTRAS_PER_PAGE ))
-
-  echo " Generating VMGM Extras Menus ($local_num_pages page(s), $EXTRAS_PER_PAGE per page)..."
-
-  for page in $(seq 0 $((local_num_pages - 1))); do
-    local page_start=$(( page * EXTRAS_PER_PAGE ))
-    local page_end=$(( page_start + EXTRAS_PER_PAGE ))
-    [ "$page_end" -gt "$local_num_extras" ] && page_end=$local_num_extras
-
-    local page_labels=()
-    local page_targets=()
-    for i in $(seq "$page_start" $((page_end - 1))); do
-      page_labels+=("${EXTRAS_MENU_LABELS[$i]}")
-      page_targets+=("${EXTRAS_MENU_TARGETS[$i]}")
-    done
-
-    # Always add "Main Menu" at the bottom
-    page_labels+=("Main Menu")
-    page_targets+=("g1 = 0; g2 = 0; jump vmgm menu entry title;")
-
-    # Build pagination pair args for build_menu
-    local pag_args=()
-    if [ "$local_num_pages" -gt 1 ]; then
-      if [ "$page" -gt 0 ]; then
-        pag_args+=("<< Prev page" "jump vmgm menu $((page + 1));")
-      fi
-      if [ "$page" -lt $((local_num_pages - 1)) ]; then
-        pag_args+=("Next page >>" "jump vmgm menu $((page + 3));")
-      fi
-    fi
-
-    local page_mpg="$WORK_DIR/vmgm_extras_p${page}.mpg"
-    local page_title="Extras Menu"
-    [ "$local_num_pages" -gt 1 ] && page_title="Extras Menu (Page $((page + 1))/$local_num_pages)"
-
-    # Call build_menu with optional --vmgm-pairs-- sentinel
-    if [ ${#pag_args[@]} -gt 0 ]; then
-      build_menu "$page_mpg" "$page_title" "${page_labels[@]}" "--vmgm-pairs--" "${pag_args[@]}"
-    else
-      build_menu "$page_mpg" "$page_title" "${page_labels[@]}"
-    fi
-
-    # Source the pagination info sidecar
-    local paginfo="${page_mpg%.mpg}_paginfo.sh"
-    local pag_num_items=0 pag_num_pairs=0
-    if [ -f "$paginfo" ]; then
-      source "$paginfo"
-    fi
-
-    # Build the PGC XML block
-    local pgc_xml=""
-    local pgc_num=$(( page + 2 ))  # PGC 1 = main menu, extras start at PGC 2
-    pgc_xml+="      <pgc>\n"
-    pgc_xml+="        <vob file=\"$page_mpg\" pause=\"inf\" />\n"
-
-    # Regular buttons (content + "Main Menu")
-    for i in "${!page_targets[@]}"; do
-      pgc_xml+="        <button name=\"b$i\"> { ${page_targets[$i]} } </button>\n"
-    done
-
-    # Pagination buttons
-    for p in $(seq 0 $((pag_num_pairs - 1))); do
-      local btn_idx=$(( ${#page_targets[@]} + p ))
-      eval "local pcmd=\"\$PAG_CMD_${p}\""
-      pgc_xml+="        <button name=\"b${btn_idx}\"> { $pcmd } </button>\n"
-    done
-
-    pgc_xml+="      </pgc>\n"
-    EXTRAS_VMGM_PGCS+=("$pgc_xml")
-  done
-fi
+# ===========================================================================
+# XML ASSEMBLY & DVD AUTHORING (Now delegated to dvd_xml.sh)
+# ===========================================================================
 
 generate_extras_pgc_xml "${EXTRAS_MENU_LABELS[@]}"
 assemble_dvdauthor_xml
