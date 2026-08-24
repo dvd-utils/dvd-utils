@@ -105,17 +105,18 @@ If you are running this in a CI/CD pipeline or cronjob where there is no TTY:
 Once complete, the -o directory (default ./dvd) will contain a standard DVD-Video file structure (VIDEO_TS/).
 
 Preview with VLC: 
-     
+
 ```bash
-    vlc "dvd:///absolute/path/to/./dvd"
+vlc "dvd:///absolute/path/to/./dvd"
 ```     
      
-     Burn to disc (e.g., with growisofs):
+Burn to disc (e.g., with growisofs):
 ```bash
 growisofs -dvd-compat -Z /dev/sr0 ./dvd
 ```     
      
-     Create an .iso file (e.g., with genisoimage):
+Create an .iso file (e.g., with genisoimage):
+
 ```bash
 genisoimage -dvd-video -o "my_movie.iso" ./dvd
 ```
