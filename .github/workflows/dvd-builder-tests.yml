@@ -238,15 +238,14 @@ jobs:
           TEST_DIR="test_$FMT"
           OUTPUT_DIR="dvd_output_$FMT"
           WORK_DIR="work_$FMT"
-
-          echo "y" | bash ./build_dvd.sh \
+          chmod +x ./generate_dvd_with_menus/*.sh
+          echo "y" | bash ./generate_dvd_with_menus/build_dvd.sh \
             -i "$TEST_DIR" \
             -m "$TEST_DIR/chicken_$FMT.mpg" \
             -e "$TEST_DIR/extras" \
             -o "$OUTPUT_DIR" \
             -w "$WORK_DIR" \
             -d "en"
-
           echo ""
           echo "build_dvd.sh completed successfully"
 
@@ -263,47 +262,38 @@ jobs:
         run: |
           set -e
           OUT="dvd_output_${{ matrix.format }}"
-
           echo "=== DVD output tree ==="
           find "$OUT" -type f | sort | while read -r f; do
             printf "  %-50s %10d bytes\n" "$f" "$(stat -c%s "$f")"
           done
-
           echo ""
           echo "=== Validating required files ==="
-
           # VMGM (disc-level menu)
           for f in VIDEO_TS.IFO VIDEO_TS.BUP VIDEO_TS.VOB; do
             test -s "$OUT/VIDEO_TS/$f" || { echo "  ❌ Missing/empty: $f"; exit 1; }
             echo "  ✓ $f"
           done
-
           # Titleset 1 (main movie)
           for f in VTS_01_0.IFO VTS_01_0.BUP VTS_01_1.VOB; do
             test -s "$OUT/VIDEO_TS/$f" || { echo "  ❌ Missing/empty: $f"; exit 1; }
             echo "  ✓ $f"
           done
-
           # Titleset 2 (extras)
           for f in VTS_02_0.IFO VTS_02_0.BUP VTS_02_1.VOB; do
             test -s "$OUT/VIDEO_TS/$f" || { echo "  ❌ Missing/empty: $f"; exit 1; }
             echo "  ✓ $f"
           done
-
           echo ""
           echo "✅ All DVD structure checks passed for ${{ matrix.format }}"
 
       # ==============================================================
-      # 10. Validate with genisoimage — a malformed DVD-Video
-      #     structure will cause -dvd-video to fail.
+      # 10. Validate with genisoimage. A malformed DVD-Video structure will cause -dvd-video to fail.
       # ==============================================================
       - name: Test ISO generation (${{ matrix.format }})
         run: |
           OUT="dvd_output_${{ matrix.format }}"
           ISO="/tmp/test_dvd_${{ matrix.format }}.iso"
-
           genisoimage -dvd-video -o "$ISO" "$OUT"
-
           test -s "$ISO" || { echo "❌ ISO not created or empty"; exit 1; }
           SIZE=$(stat -c%s "$ISO")
           echo "✅ ISO created: $SIZE bytes ($(( SIZE / 1024 )) KiB)"
