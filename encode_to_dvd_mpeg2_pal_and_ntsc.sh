@@ -16,20 +16,10 @@ PAL_OUT="${BASENAME}_PAL.mpg"
 NTSC_OUT="${BASENAME}_NTSC.mpg"
 
 echo "=== Encoding DVD PAL Video ==="
-ffmpeg -y -i "$INPUT" \
-  -target pal-dvd \
-  -aspect 16:9 \
-  -b:v 6000k -maxrate:v 8000k -bufsize:v 1835008 \
-  -b:a 192k -ar 48000 \
-  "$PAL_OUT"
+ffmpeg -y -i "$INPUT" -target pal-dvd  -aspect 16:9 -b:v 6000k -maxrate:v 8000k -bufsize:v 1835008 -b:a 192k -ar 48000 "$PAL_OUT"
 
 echo "=== Encoding DVD NTSC Video ==="
-ffmpeg -y -i "$INPUT" \
-  -target ntsc-dvd \
-  -aspect 16:9 \
-  -b:v 6000k -maxrate:v 8000k -bufsize:v 1835008 \
-  -b:a 192k -ar 48000 \
-  "$NTSC_OUT"
+ffmpeg -y -i "$INPUT" -target ntsc-dvd -aspect 16:9 -b:v 6000k -maxrate:v 8000k -bufsize:v 1835008 -b:a 192k -ar 48000 "$NTSC_OUT"
 
 echo "Done! Generated:"
 echo " - $PAL_OUT"
