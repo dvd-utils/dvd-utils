@@ -1,0 +1,26 @@
+name: Delete old workflow runs
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Delete old runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_REPO: ${{ github.repository }}
+        run: |
+          # Calculate the date in ISO 8601 format
+          CUTOFF_DATE=$(date -d '1 days ago' --iso-8601)
+          echo "Cleaning up runs in $TARGET_REPO older than $CUTOFF_DATE (but keeping the 5 newest)..."
+          gh run list --repo "$TARGET_REPO" --limit 1000 --json databaseId,createdAt \
+            --jq ".[5:] | .[] | select(.createdAt < \"$CUTOFF_DATE\") | .databaseId" \
+            | while read run_id; do
+                echo "Deleting run ID: $run_id"
+                gh run delete "$run_id" --repo "$TARGET_REPO"
+              done
