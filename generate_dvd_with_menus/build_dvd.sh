@@ -514,7 +514,7 @@ echo "============================================================="
 read -r -p "Analysis complete. Proceed with encoding and DVD authoring? [Y/n] " CONFIRM_REPLY
 case "${CONFIRM_REPLY,,}" in
   ""|y|yes) ;;
-  *) echo "Aborted — no encoding was performed." >&2; exit 1 ;;
+  *) echo "Aborted." >&2; exit 1 ;;
 esac
 echo "============================================================="
 echo ""
@@ -647,8 +647,15 @@ echo "Authoring DVD (this may take a moment)..."
 run_logged "$LOG_DIR/dvdauthor.log" dvdauthor -x "$XML_FILE"
 
 OUT_DIR_ABS="$(cd "$OUT_DIR" && pwd)"
+
+# Normalize current folder name: lowercase, replace spaces/special chars with underscores
+CURRENT_FOLDER_NAME="$(basename "$(pwd)")"
+NORMALIZED_NAME="$(echo "$CURRENT_FOLDER_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/_/g' | sed -E 's/^_+|(_)+$//g')"
+ISO_PATH="/tmp/${NORMALIZED_NAME}.iso"
+
 echo "============================================================="
 echo " DVD BUILD COMPLETE"
 echo " Structure: $OUT_DIR_ABS"
 echo " Preview:   vlc \"dvd://${OUT_DIR_ABS}\""
+echo " Generate .iso: genisoimage -dvd-video -o \"$ISO_PATH\" \"$OUT_DIR_ABS\""
 echo "============================================================="
