@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# See ./install_transcription_service.sh to install this
 IMAGE="localhost/whisperx"
 LANGUAGE="en"
 
