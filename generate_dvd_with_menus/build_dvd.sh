@@ -1024,3 +1024,7 @@ if [ ${#EXTRAS_MENU_LABELS[@]} -gt 0 ]; then
     EXTRAS_VMGM_PGCS+=("$pgc_xml")
   done
 fi
+
+generate_extras_pgc_xml "${EXTRAS_MENU_LABELS[@]}"
+assemble_dvdauthor_xml
+author_dvd

@@ -6,10 +6,7 @@
 #  It relies on the following globals being set by the parent script:
 #    - DETECTED_FORMAT, WIDTH, HEIGHT, TARGET, FPS
 #    - WORK_DIR, OUT_DIR, LOG_DIR
-#    - MAIN_DEFAULT_SUBP, FPC_JUMP
-#    - VMGM_MPG, VMGM_TARGETS
-#    - CURRENT_HAS_SUBS, CURRENT_MUXED_MPG, CURRENT_DEFAULT_SUBP
-#    - CURRENT_SUB_LABELS, CURRENT_INPUT_FILES
+#    - EXTRAS_PER_PAGE, EXTRAS_MENU_LABELS, EXTRAS_MENU_TARGETS
 # ============================================================================
 
 # ---------------------------------------------------------------------------
@@ -25,6 +22,13 @@ CURRENT_MUXED_MPG=""
 CURRENT_DEFAULT_SUBP=62 # 62 = off (DVD convention)
 CURRENT_INPUT_FILES=()
 CURRENT_DATA_FILES=()
+
+# Defaults for VMGM/FPC assembly (overwritten by the main script during processing)
+MAIN_DEFAULT_SUBP=62
+FPC_JUMP="g1 = 0; g2 = 0; jump vmgm menu entry title;"
+
+# Array to hold extras PGC XML blocks
+EXTRAS_VMGM_PGCS=()
 
 # ---------------------------------------------------------------------------
 # HELPER: Generate XML chunk for a single Titleset
@@ -116,14 +120,14 @@ append_titleset_xml() {
 # ---------------------------------------------------------------------------
 generate_extras_pgc_xml() {
   local extras_labels=("$@")
-  EXTRAS_VMGM_PGCS=()  # array of PGC XML blocks for the <vmgm><menus> section
+  EXTRAS_VMGM_PGCS=()  # Reset array
 
   if [ ${#extras_labels[@]} -eq 0 ]; then
     return
   fi
 
   local local_num_extras=${#extras_labels[@]}
-  # Note: EXTRAS_PER_PAGE and EXTRAS_MENU_TARGETS are expected to be in scope from the parent script
+    # Note: EXTRAS_PER_PAGE and EXTRAS_MENU_TARGETS are expected to be in scope from the parent script
   local local_num_pages=$(( (local_num_extras + EXTRAS_PER_PAGE - 1) / EXTRAS_PER_PAGE ))
 
   echo " Generating VMGM Extras Menus ($local_num_pages page(s), $EXTRAS_PER_PAGE per page)..."
@@ -266,6 +270,3 @@ author_dvd() {
   echo " Generate .iso: genisoimage -dvd-video -o \"$iso_path\" \"$out_dir_abs\""
   echo "============================================================="
 }
-generate_extras_pgc_xml "${EXTRAS_MENU_LABELS[@]}"
-assemble_dvdauthor_xml
-author_dvd
