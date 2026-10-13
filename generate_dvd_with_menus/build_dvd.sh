@@ -47,7 +47,7 @@ Options:
                              If not set, a still is auto-extracted from the main movie.
   --bg-time         TIME     Timestamp for still extraction when using auto background
                              (e.g. "00:05:30"). Default: random moment.
-  --extras-per-page N        Number of extras per paginated menu page (default: 10)
+  --extras-per-page N        Number of extras per paginated menu page (default: 5)
   -y, --yes                  Skip confirmation prompt
   -h, --help                 Show this help and exit
 

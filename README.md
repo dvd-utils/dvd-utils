@@ -1,167 +1,60 @@
 # DVD utilities
 
-Some utilities to generate a DVD with with dynamic menus, subtitles, and extras from a bag of video and subtitle files.
+Utilities for preparing DVD-compliant video, authoring a DVD-Video structure with dynamic menus and subtitles, and burning it to disc.
 
-## 🔨 `build-dvd.sh` - Generate a DVD from existing video and subtitles files
+## Table of contents
 
-### Prerequisites
+- [Quick start](#quick-start)
+- [Utilities](#utilities)
+  - [`build-dvd.sh`](#build-dvdsh)
+  - [`burn-dvd.sh`](#burn-dvdsh)
+- [Submodules](#submodules)
+  - [`dvd-subtitle-utils`](#dvd-subtitle-utils)
+  - [`dvdauthor`](#dvdauthor)
 
-You must have the following tools installed and available in your $PATH:
+## Quick start
 
-   - Video Processing: ffmpeg, ffprobe
-   - DVD Authoring: `dvdauthor`, `spumux` (part of `dvdauthor`/`libdvdcss`)
-   - Graphics Generation: `convert` / `montage` (ImageMagick v7)
-   - Subtitle Processing: `bdsup2sub` (optional, only required if you have .sup PGS subtitles)
+Initialize the submodules:
 
-On Debian/Ubuntu, you can install most of these via `sudo apt install ffmpeg dvdauthor imagemagick bdsup2sub`.
-
-### Usage
-```
-# This project depends on some submodules; initialize them
+```bash
 git submodule update --init --depth=1
-
-# Make all bash scripts executable
-find . -type f -name '*.sh' -exec chmod +x {} + 
-
-# 1) Pre-encode any .mkv/.mp4/... in ./movies into DVD-compliant .mpg
-./encode_to_dvd_mpeg2.sh -i ./movies -f pal
-
-# 2) Author the disc, pointing at the converted .mpg files (-e for optional Extras folder)
-./generate_dvd_with_menus/build_dvd.sh -i ./movies -e ./movies/extras -o ./dvd
+find . -type f -name '*.sh' -exec chmod +x {} +
 ```
 
-### Detailed CLI Options (`build_dvd.sh`)
-```
-Usage: build_dvd.sh [OPTIONS]
+Install the tools required for the operations you plan to run. DVD authoring uses `ffmpeg`, `ffprobe`, `dvdauthor` (including `spumux`), ImageMagick's `convert`, and a supported BDSup2Sub subtitle converter. Burning additionally requires `growisofs` and `lsblk`. See the [DVD builder guide](generate_dvd_with_menus/README.md#requirements) for details.
 
-Options:
-  -i, --input       DIR      Directory to scan for the main movie .mpg (default: .)
-  -e, --extras      DIR      Directory containing extra .mpg files (default: ./extras)
-                             Supports subfolders for grouping: extras/{Category}/file.mpg
-  -m, --main        FILE     Explicit main movie .mpg (overrides auto-detection)
-  -o, --out         DIR      Final DVD-Video output directory (default: ./dvd)
-  -w, --work        DIR      Scratch/working directory (default: ./work)
-  -d, --default     LANG     Default subtitle language hint, e.g. "nl" or "dutch" (default: nl)
-  --bg              SPEC     Menu background: image path, video path, or hex color (e.g. "#1a1a2e")
-                             If not set, a still is auto-extracted from the main movie.
-  --bg-time         TIME     Timestamp for still extraction when using auto background
-                             (e.g. "00:05:30"). Default: random moment between 5% and 40%.
-  --extras-per-page N        Number of extras per paginated menu page (default: 6, max: 36)
-  -y, --yes                  Skip confirmation prompt (useful for cronjobs/pipelines)
-  -h, --help                 Show help and exit
-```
-
-### Advanced Usage Examples
-
-#### Custom Menu Backgrounds  
- 
-```bash
-# Use a dark blue solid color
-./generate_dvd_with_menus/build_dvd.sh -i ./movies --bg "#1a1a2e" -o ./dvd
-
-# Use a specific image (will be scaled/cropped to fit DVD resolution)
-./generate_dvd_with_menus/build_dvd.sh -i ./movies --bg "./assets/background.png" -o ./dvd
-
-# Pull a still from the main movie at exactly 12 minutes
-./generate_dvd_with_menus/build_dvd.sh -i ./movies --bg-time "00:12:00" -o ./dvd
-```
-
-#### Organizing Extras with Subfolders
-
-If your extras directory is structured like this:  
- 
-```
-extras/
-├── Behind_the_Scenes/
-│   ├── making_of.mpg
-│   └── interviews.mpg
-└── Deleted_Scenes/
-    ├── scene_01.mpg
-    └── scene_02.mpg
-``` 
-
-The script will automatically detect the subfolders, label the buttons as [Behind_the_Scenes] making_of, and include them in the paginated Extras menu.
-
-#### Setting Default Subtitles
-
-If your main movie has movie_track0_eng.sub and movie_track1_nl.sub:
+Place DVD-compliant MPEG-2 `.mpg` files in an input directory, then author and burn the DVD:
 
 ```bash
-# Set Dutch as the default subtitle track
-./generate_dvd_with_menus/build_dvd.sh -i ./movies -d "nl" -o ./dvd
-
-# Force subtitles off by default
-./generate_dvd_with_menus/build_dvd.sh -i ./movies -d "off" -o ./dvd
-```
- 
-#### Non-interactive / Automation
-
-If you are running this in a CI/CD pipeline or cronjob where there is no TTY:
-```bash
-# The -y flag bypasses the "Proceed with encoding? [Y/n]" prompt
-./generate_dvd_with_menus/build_dvd.sh -i ./movies -y -o ./dvd
-```
- 
-#### Output & Playback
-
-Once complete, the -o directory (default ./dvd) will contain a standard DVD-Video file structure (VIDEO_TS/).
-
-Preview with VLC: 
-
-```bash
-vlc "dvd:///absolute/path/to/./dvd"
-```     
-     
-Burn to disc (e.g., with growisofs):
-```bash
-growisofs -dvd-compat -Z /dev/sr0 ./dvd
-```     
-     
-Create an .iso file (e.g., with genisoimage):
-
-```bash
-genisoimage -dvd-video -o "my_movie.iso" ./dvd
+./build-dvd.sh -i ./movies -e ./movies/extras -o ./dvd
+./burn-dvd.sh ./dvd
 ```
 
-### How Subtitles Are Discovered
+For builder options, subtitle handling, menu backgrounds, and output details, see the [DVD builder guide](generate_dvd_with_menus/README.md).
 
-The script looks for subtitle files in the same directory as the .mpg file, sharing the same base name. It supports:
+## Utilities
 
-    - VobSub: basename.idx + basename.sub
-    - Raw VobSub: basename.sub.idx + basename.sub
-    - PGS (Blu-ray): basename.sup (requires bdsup2sub)
-    - Text (SRT): basename.srt
+### `build-dvd.sh`
 
-## 📀 `burn-dvd.sh` - Put the generated DVD image on a playable disc
- 
-This script burns a DVD image or an authored DVD folder to a disc using the first optical drive found on the system. The input type is detected automatically. 
+Authors a DVD-Video directory with a main movie, optional extras, dynamic menus, and available subtitles. It is a wrapper for [`generate_dvd_with_menus/build_dvd.sh`](generate_dvd_with_menus/build_dvd.sh). See the [dedicated guide](generate_dvd_with_menus/README.md) for setup and usage.
 
-It intelligently parses patterns like _track0_eng, _track1_nl, or _forced to properly label the subtitle streams in the DVD menu.
+### `burn-dvd.sh`
 
- 
-### Usage
- 
+Burns an ISO image or an authored DVD folder to the first optical drive detected on the system:
+
 ```bash
-./burn-dvd.sh <path-to-iso-or-dvd-folder>
-```
- 
-```bash
-# Burn an ISO image
 ./burn-dvd.sh movie.iso
- 
-# Burn a DVD-Video folder (must contain VIDEO_TS/)
-./burn-dvd.sh /home/user/MyMovie
+./burn-dvd.sh ./dvd
 ```
 
-### Requirements
- 
-- Linux with `growisofs`, `lsblk` (util-linux), `awk`:
-```sh
-sudo apt install util-linux gawk dvd+rw-tools
-```
-- A DVD writer with a blank, writable disc inserted and access to the drive (run as root, or be in the `cdrom` group on most distributions)
- 
-### Note
-- **Disc is finalized:** `-dvd-compat` closes the disc for standalone player compatibility, so no further sessions can be added.
-- **Overwrites rewritable discs:** `-Z` starts a new session and replaces existing content on DVD±RW media.
-- **DVD-Audio mode** writes the folder as a plain data disc (Rock Ridge + Joliet). It does not master a spec-compliant DVD-Audio disc.
+Requires Linux, `growisofs` (from `dvd+rw-tools`), and `lsblk` (from `util-linux`). Burning with `-dvd-compat` finalizes the disc, and writing to rewritable media replaces its existing content.
+
+## Submodules
+
+### `dvd-subtitle-utils`
+
+Provides subtitle conversion tools, including `srt2vobsub.sh` for converting SRT subtitles to VobSub and BDSup2Sub++ for converting image-based subtitle formats such as Blu-ray SUP to DVD VobSub. The DVD builder can use BDSup2Sub++ when processing bitmap subtitles. See the [submodule README](dvd-subtitle-utils/README.md) for build and usage instructions.
+
+### `dvdauthor`
+
+Provides the `dvdauthor` and `spumux` programs used to assemble DVD-Video titlesets, menus, and subtitle streams. The builder uses these tools to create the authored DVD structure. See the [submodule README](dvdauthor/README.md) for build and usage instructions.
