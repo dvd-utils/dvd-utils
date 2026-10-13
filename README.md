@@ -2,7 +2,9 @@
 
 Some utilities to generate a DVD with with dynamic menus, subtitles, and extras from a bag of video and subtitle files.
 
-## Prerequisites
+## 🔨 `build-dvd.sh` - Generate a DVD from existing video and subtitles files
+
+### Prerequisites
 
 You must have the following tools installed and available in your $PATH:
 
@@ -13,7 +15,7 @@ You must have the following tools installed and available in your $PATH:
 
 On Debian/Ubuntu, you can install most of these via `sudo apt install ffmpeg dvdauthor imagemagick bdsup2sub`.
 
-## Usage
+### Usage
 ```
 # This project depends on some submodules; initialize them
 git submodule update --init --depth=1
@@ -28,7 +30,7 @@ find . -type f -name '*.sh' -exec chmod +x {} +
 ./generate_dvd_with_menus/build_dvd.sh -i ./movies -e ./movies/extras -o ./dvd
 ```
 
-## Detailed CLI Options (`build_dvd.sh`)
+### Detailed CLI Options (`build_dvd.sh`)
 ```
 Usage: build_dvd.sh [OPTIONS]
 
@@ -49,9 +51,9 @@ Options:
   -h, --help                 Show help and exit
 ```
 
-## Advanced Usage Examples
+### Advanced Usage Examples
 
-### Custom Menu Backgrounds  
+#### Custom Menu Backgrounds  
  
 ```bash
 # Use a dark blue solid color
@@ -64,7 +66,7 @@ Options:
 ./generate_dvd_with_menus/build_dvd.sh -i ./movies --bg-time "00:12:00" -o ./dvd
 ```
 
-### Organizing Extras with Subfolders
+#### Organizing Extras with Subfolders
 
 If your extras directory is structured like this:  
  
@@ -80,7 +82,7 @@ extras/
 
 The script will automatically detect the subfolders, label the buttons as [Behind_the_Scenes] making_of, and include them in the paginated Extras menu.
 
-### Setting Default Subtitles
+#### Setting Default Subtitles
 
 If your main movie has movie_track0_eng.sub and movie_track1_nl.sub:
 
@@ -92,7 +94,7 @@ If your main movie has movie_track0_eng.sub and movie_track1_nl.sub:
 ./generate_dvd_with_menus/build_dvd.sh -i ./movies -d "off" -o ./dvd
 ```
  
-### Non-interactive / Automation
+#### Non-interactive / Automation
 
 If you are running this in a CI/CD pipeline or cronjob where there is no TTY:
 ```bash
@@ -100,7 +102,7 @@ If you are running this in a CI/CD pipeline or cronjob where there is no TTY:
 ./generate_dvd_with_menus/build_dvd.sh -i ./movies -y -o ./dvd
 ```
  
-### Output & Playback
+#### Output & Playback
 
 Once complete, the -o directory (default ./dvd) will contain a standard DVD-Video file structure (VIDEO_TS/).
 
@@ -121,7 +123,7 @@ Create an .iso file (e.g., with genisoimage):
 genisoimage -dvd-video -o "my_movie.iso" ./dvd
 ```
 
-## How Subtitles Are Discovered
+### How Subtitles Are Discovered
 
 The script looks for subtitle files in the same directory as the .mpg file, sharing the same base name. It supports:
 
@@ -130,4 +132,36 @@ The script looks for subtitle files in the same directory as the .mpg file, shar
     - PGS (Blu-ray): basename.sup (requires bdsup2sub)
     - Text (SRT): basename.srt
 
+## 📀 `burn-dvd.sh` - Put the generated DVD image on a playable disc
+ 
+This script burns a DVD image or an authored DVD folder to a disc using the first optical drive found on the system. The input type is detected automatically. 
+
 It intelligently parses patterns like _track0_eng, _track1_nl, or _forced to properly label the subtitle streams in the DVD menu.
+
+ 
+### Usage
+ 
+```bash
+./burn-dvd.sh <path-to-iso-or-dvd-folder>
+```
+ 
+```bash
+# Burn an ISO image
+./burn-dvd.sh movie.iso
+ 
+# Burn a DVD-Video folder (must contain VIDEO_TS/)
+./burn-dvd.sh /home/user/MyMovie
+```
+
+### Requirements
+ 
+- Linux with `growisofs`, `lsblk` (util-linux), `awk`:
+```sh
+sudo apt install util-linux gawk dvd+rw-tools
+```
+- A DVD writer with a blank, writable disc inserted and access to the drive (run as root, or be in the `cdrom` group on most distributions)
+ 
+### Note
+- **Disc is finalized:** `-dvd-compat` closes the disc for standalone player compatibility, so no further sessions can be added.
+- **Overwrites rewritable discs:** `-Z` starts a new session and replaces existing content on DVD±RW media.
+- **DVD-Audio mode** writes the folder as a plain data disc (Rock Ridge + Joliet). It does not master a spec-compliant DVD-Audio disc.
