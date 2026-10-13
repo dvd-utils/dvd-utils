@@ -1,5 +1,43 @@
 #!/bin/bash
 
+# =============================================================================
+#  burn-dvd.sh  -  burn a disc from .iso image or DVD folder dump
+# =============================================================================
+#
+#  DESCRIPTION
+#  -----------
+#  Burns a DVD image or an authored DVD folder to a disc using the first optical drive found on the system. 
+#  
+#  Accepted inputs:
+#
+#    - .iso file                     -> burned as a raw disc image
+#    - folder containing VIDEO_TS/   -> burned as a DVD-Video disc
+#    - folder containing AUDIO_TS/   -> burned as a data disc with Rock Ridge + Joliet extensions (only used when VIDEO_TS is absent)
+#
+#  USAGE
+#  -----
+#    ./burn-dvd.sh <path-to-iso-or-dvd-folder>
+#
+#  EXAMPLES
+#  --------
+#    ./burn-dvd.sh movie.iso
+#    ./burn-dvd.sh /home/user/MyMovie
+#
+#  If called without arguments, the script prints the usage line and, when it finds a .iso file in the current directory (or in /tmp), suggests it as an example command.
+#
+#  REQUIREMENTS
+#  ------------
+#    - Linux with util-linux (lsblk), awk, growisofs (dvd+rw-tools): sudo apt install util-linux gawk dvd+rw-tools
+#    - DVD writer and a blank, writable disc inserted
+#    - Permission to access the drive (root, or membership of the "cdrom" group, depending on the distribution)
+#
+#  NOTES
+#  -----
+#    - Only the first detected drive is used. With several burners, edit the DRIVE detection below or set DRIVE manually.
+#    - `-dvd-compat` closes the disc so it plays in standalone DVD players, but no more sessions can be added afterwards.
+#    - `-Z` starts a new session: any existing content on a rewritable disc will be overwritten.
+# =============================================================================
+
 # ISO_PATH should be passed as the first argument.
 # It can be either:
 #   - a .iso file, or
