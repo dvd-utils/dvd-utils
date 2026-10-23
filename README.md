@@ -14,7 +14,7 @@ Utilities for preparing DVD-compliant video, authoring a DVD-Video structure wit
 
 ## Quick start
 
-Initialize the submodules:
+Initialize the submodules (`dvd-subtitle-utils` and `dvdauthor`):
 
 ```bash
 git submodule update --init --depth=1
@@ -53,8 +53,8 @@ Requires Linux, `growisofs` (from `dvd+rw-tools`), and `lsblk` (from `util-linux
 
 ### `dvd-subtitle-utils`
 
-Provides subtitle conversion tools, including `srt2vobsub.sh` for converting SRT subtitles to VobSub and BDSup2Sub++ for converting image-based subtitle formats such as Blu-ray SUP to DVD VobSub. The DVD builder can use BDSup2Sub++ when processing bitmap subtitles. See the [submodule README](dvd-subtitle-utils/README.md) for build and usage instructions.
+Provides subtitle conversion tools, including `srt2vobsub.sh` for converting SRT subtitles to VobSub and BDSup2Sub++ for converting image-based subtitle formats such as Blu-ray SUP to DVD VobSub. The DVD builder can use BDSup2Sub++ when processing bitmap subtitles. See the [submodule README](https://github.com/dvd-utils/dvd-subtitle-utils/) for build and usage instructions.
 
 ### `dvdauthor`
 
-Provides the `dvdauthor` and `spumux` programs used to assemble DVD-Video titlesets, menus, and subtitle streams. The builder uses these tools to create the authored DVD structure. See the [submodule README](dvdauthor/README.md) for build and usage instructions.
+Provides the `dvdauthor` and `spumux` programs used to assemble DVD-Video titlesets, menus, and subtitle streams. The builder uses these tools to create the authored DVD structure. See the [submodule README](https://github.com/dvd-utils/dvdauthor/) for build and usage instructions.
